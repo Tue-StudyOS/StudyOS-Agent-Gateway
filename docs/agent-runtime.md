@@ -20,6 +20,8 @@ model = "gpt-5.5"
 model_reasoning_effort = "high"
 ```
 
+The gateway also seeds `$CODEX_HOME/memories/studyos-course.md` on startup if the file does not already exist. Discord requests point Codex at this memory entry point instead of injecting the full course/project context into every prompt.
+
 Other examples:
 
 ```bash

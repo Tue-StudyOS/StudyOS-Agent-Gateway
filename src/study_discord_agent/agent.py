@@ -1,12 +1,15 @@
 import asyncio
 import json
 import logging
+import os
 import shlex
 import time
 from dataclasses import dataclass
 from typing import Any, cast
 
 import httpx
+
+from study_discord_agent.prompt_context import build_agent_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -72,15 +75,7 @@ class AgentGateway:
         if not self._command:
             raise RuntimeError("AGENT_COMMAND is not configured")
 
-        full_prompt = (
-            "You are running from the StudyOS Discord/GitHub collaboration gateway.\n"
-            "Collaborate with StudyOS participants in Discord and GitHub. Brainstorm, answer "
-            "technical questions, research when tools are available, refine issues, and create "
-            "implementation PRs only when scope is clear. Never merge pull requests.\n"
-            f"Discord user: {user}\n"
-            f"Discord channel id: {channel_id}\n\n"
-            f"{prompt}\n"
-        )
+        full_prompt = build_agent_prompt(prompt, user, channel_id, os.environ.get("CODEX_HOME"))
         process = await asyncio.create_subprocess_exec(
             *shlex.split(self._command),
             stdin=asyncio.subprocess.PIPE,

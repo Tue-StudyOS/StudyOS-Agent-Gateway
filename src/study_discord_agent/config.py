@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8080
     log_level: str = "info"
+    codex_home: str | None = None
 
     @field_validator("discord_guild_id", "discord_pr_channel_id", mode="before")
     @classmethod

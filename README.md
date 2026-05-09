@@ -79,6 +79,8 @@ model = "gpt-5.5"
 model_reasoning_effort = "high"
 ```
 
+On startup the gateway seeds `$CODEX_HOME/memories/studyos-course.md` if it does not exist. Each Discord-triggered Codex run is pointed at that file as the project memory entry point for course context, product direction, collaboration policy, and tone.
+
 Authenticate the CLIs once inside the running container:
 
 ```bash
