@@ -17,11 +17,17 @@ class Settings(BaseSettings):
     github_write_enabled: bool = False
 
     allowed_discord_role_ids: str = ""
+    discord_message_agent_enabled: bool = False
+
     agent_webhook_url: str | None = None
     agent_command: str | None = None
     agent_workdir: str | None = None
     agent_timeout_seconds: int = 900
     agent_auto_review_enabled: bool = False
+
+    github_poll_enabled: bool = False
+    github_poll_interval_seconds: int = 1800
+    github_poll_limit: int = 20
 
     host: str = "0.0.0.0"
     port: int = 8080

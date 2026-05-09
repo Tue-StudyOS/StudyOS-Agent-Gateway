@@ -8,7 +8,7 @@
 4. Copy the target PR channel ID into `DISCORD_PR_CHANNEL_ID`.
 5. Optionally copy the server ID into `DISCORD_GUILD_ID` for faster slash command sync.
 
-The bot does not need the privileged message-content intent for the current slash-command workflow.
+The bot does not need the privileged message-content intent for slash commands. Enable message content in the Discord Developer Portal only if `DISCORD_MESSAGE_AGENT_ENABLED=true` and you want `@bot please inspect this PR` style messages.
 
 ## GitHub
 
@@ -46,6 +46,8 @@ The recommended course setup is:
 4. Deploy this bot with `AGENT_COMMAND` pointing to the authenticated runtime.
 5. Keep GitHub write permissions behind role checks and branch protection.
 
+The image can contain GitHub-aware tooling and CLIs, but authentication belongs in mounted config directories or runtime environment variables. Never build tokens into the image.
+
 For Codex, authenticate once on the host and mount the auth directory into the container:
 
 ```bash
@@ -66,6 +68,18 @@ AGENT_WORKDIR=/srv/course-monorepo
 ```
 
 Use `AGENT_AUTO_REVIEW_ENABLED=true` only after slash-command agent usage works reliably.
+
+## Periodic GitHub Triage
+
+Set:
+
+```bash
+GITHUB_POLL_ENABLED=true
+GITHUB_POLL_INTERVAL_SECONDS=1800
+GITHUB_POLL_LIMIT=20
+```
+
+The bot will periodically list open PRs and issues, build one prompt, and invoke the agent. This is the safest shape for "every 15 or 30 minutes, check comments/issues/PRs and act" because scheduling remains outside Discord message handling and can be disabled independently.
 
 ## External Agent Runtime
 

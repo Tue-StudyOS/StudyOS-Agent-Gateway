@@ -24,6 +24,8 @@ The intended deployment is a small server or container where Codex, Claude Code,
 - Write actions disabled by default until `GITHUB_WRITE_ENABLED=true`.
 - Agent runner through `AGENT_COMMAND`, or external bridge through `AGENT_WEBHOOK_URL`.
 - Optional automatic PR review summaries on GitHub webhook events.
+- Optional Discord mention listener for natural chat tasks.
+- Periodic GitHub triage loop for open PRs and issues.
 - Docker and Docker Compose setup, including an agent image with Codex CLI installed.
 
 ## Architecture
@@ -34,6 +36,8 @@ flowchart LR
     API --> Queue["async event queue"]
     Queue --> Bot["Discord bot"]
     Bot --> Channel["Discord PR channel"]
+    Bot --> Poller["GitHub poller"]
+    Poller --> Agent
     Bot --> GitHubAPI["GitHub REST API"]
     Bot --> Agent["Codex / Claude / PicoClaw / OpenClaw"]
 ```
@@ -77,7 +81,10 @@ docker compose -f docker-compose.agent.yml up --build
 | `GITHUB_TOKEN` | Fine-grained token or GitHub App installation token |
 | `GITHUB_REPOSITORY` | Default repository in `owner/name` form |
 | `GITHUB_WRITE_ENABLED` | Enables PR comments, issue closure, and PR merges |
+| `GITHUB_POLL_ENABLED` | Periodically asks the agent to triage open PRs/issues |
+| `GITHUB_POLL_INTERVAL_SECONDS` | Poll interval, for example `900` or `1800` |
 | `ALLOWED_DISCORD_ROLE_IDS` | Comma-separated role IDs allowed to run write commands |
+| `DISCORD_MESSAGE_AGENT_ENABLED` | Enables mention-based Discord message handling |
 | `AGENT_COMMAND` | Local agent CLI command, prompt is passed on stdin |
 | `AGENT_WORKDIR` | Working directory for the agent command |
 | `AGENT_TIMEOUT_SECONDS` | Max runtime for one agent invocation |
@@ -124,6 +131,17 @@ AGENT_COMMAND="/opt/picoclaw/bin/picoclaw run --stdin"
 ```
 
 For Codex, authenticate once on the host and mount `CODEX_HOME` read-only into the agent container. For Claude Code, authenticate on the deployment machine or use its supported long-lived token setup. Keep repository writes protected by branch protection and GitHub token scopes.
+
+## Scheduled Triage
+
+Set `GITHUB_POLL_ENABLED=true` to make the bot check open PRs and issues every `GITHUB_POLL_INTERVAL_SECONDS`. The poller builds one triage prompt and sends it to the configured agent runner. That is the right place for tasks like:
+
+- summarize stale PRs
+- unify duplicate issues
+- comment on blocked work
+- start small implementations and create PRs
+
+The image should contain tools, but authentication should be injected at deployment time. Do not bake `GITHUB_TOKEN`, Codex auth, Claude auth, SSH keys, or Discord tokens into the image.
 
 ## Development
 

@@ -53,4 +53,23 @@ The generated prompt asks for a Discord summary and explicitly tells the agent n
 
 ## Cron And Scheduled Work
 
-Keep scheduled jobs outside the Discord event loop. Use host cron, systemd timers, GitHub Actions, or a separate scheduler container that invokes the same agent command with a planned prompt.
+For this repo, prefer the built-in GitHub poller first:
+
+```bash
+GITHUB_POLL_ENABLED=true
+GITHUB_POLL_INTERVAL_SECONDS=1800
+```
+
+Use host cron, systemd timers, GitHub Actions, or a separate scheduler container only for jobs that should run independently from the bot process.
+
+## Authentication Model
+
+The deployable image should include the bot and any CLIs you need. It should not include credentials.
+
+Use runtime injection instead:
+
+- `DISCORD_TOKEN` as an environment variable or secret
+- `GITHUB_TOKEN` as an environment variable or GitHub App token provider
+- `CODEX_HOME` mounted read-only for Codex auth
+- Claude Code auth mounted or configured according to its deployment mode
+- SSH deploy keys mounted read-only if the agent needs Git over SSH

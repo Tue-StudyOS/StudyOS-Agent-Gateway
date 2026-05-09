@@ -19,6 +19,7 @@ class StudyBot(commands.Bot):
         queue: "asyncio.Queue[DiscordNotification]",
     ) -> None:
         intents = discord.Intents.default()
+        intents.message_content = settings.discord_message_agent_enabled
         super().__init__(command_prefix="!", intents=intents)
         self.settings = settings
         self.github = github
@@ -68,6 +69,38 @@ class StudyBot(commands.Bot):
                 await channel.send(reply.message[:1900])
             except RuntimeError as exc:
                 await channel.send(f"Agent review failed: {exc}")
+
+    async def publish_agent_message(self, message: str) -> None:
+        channel = self.get_channel(self.settings.discord_pr_channel_id)
+        if channel is None:
+            channel = await self.fetch_channel(self.settings.discord_pr_channel_id)
+        if not isinstance(channel, discord.abc.Messageable):
+            raise RuntimeError("Configured Discord PR channel is not messageable")
+        await channel.send(message[:1900])
+
+    async def on_message(self, message: discord.Message) -> None:
+        if not self.settings.discord_message_agent_enabled:
+            return
+        if message.author.bot:
+            return
+        if self.user is None or self.user not in message.mentions:
+            return
+
+        prompt = message.clean_content.replace(f"@{self.user.display_name}", "").strip()
+        if not prompt:
+            await message.reply("Send a question or task after mentioning me.")
+            return
+
+        async with message.channel.typing():
+            try:
+                reply = await self.agent.ask(
+                    prompt=prompt,
+                    user=str(message.author),
+                    channel_id=message.channel.id,
+                )
+                await message.reply(reply.message[:1900])
+            except RuntimeError as exc:
+                await message.reply(f"Agent failed: {exc}")
 
 
 def study_group(bot: StudyBot) -> app_commands.Group:

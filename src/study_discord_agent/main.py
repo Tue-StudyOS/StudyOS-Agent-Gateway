@@ -8,6 +8,7 @@ from study_discord_agent.config import load_settings
 from study_discord_agent.discord_bot import StudyBot
 from study_discord_agent.github_client import GitHubClient
 from study_discord_agent.github_events import DiscordNotification
+from study_discord_agent.triage import run_github_triage_loop
 from study_discord_agent.web import create_app
 
 
@@ -36,10 +37,20 @@ async def run() -> None:
     )
 
     async with bot:
-        await asyncio.gather(
+        tasks = [
             bot.start(settings.discord_token_value),
             server.serve(),
-        )
+        ]
+        if settings.github_poll_enabled:
+            tasks.append(
+                run_github_triage_loop(
+                    settings,
+                    github,
+                    agent,
+                    bot.publish_agent_message,
+                ),
+            )
+        await asyncio.gather(*tasks)
 
 
 def main() -> None:
