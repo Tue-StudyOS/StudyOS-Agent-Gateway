@@ -12,4 +12,4 @@ RUN pip install --no-cache-dir .
 
 EXPOSE 8080
 
-CMD ["studyos-discord-agent"]
+CMD ["studyos-agent-gateway"]

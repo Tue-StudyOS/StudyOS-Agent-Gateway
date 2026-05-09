@@ -14,10 +14,8 @@ class Settings(BaseSettings):
     github_webhook_secret: SecretStr
     github_token: SecretStr | None = None
     github_repository: str | None = None
-    github_write_enabled: bool = False
 
-    allowed_discord_role_ids: str = ""
-    discord_message_agent_enabled: bool = False
+    discord_message_agent_enabled: bool = True
 
     agent_webhook_url: str | None = None
     agent_command: str | None = None
@@ -41,17 +39,6 @@ class Settings(BaseSettings):
         if value.count("/") != 1:
             raise ValueError("GITHUB_REPOSITORY must use owner/name format")
         return value
-
-    @cached_property
-    def allowed_role_ids(self) -> frozenset[int]:
-        if not self.allowed_discord_role_ids.strip():
-            return frozenset()
-        values: list[int] = []
-        for item in self.allowed_discord_role_ids.split(","):
-            item = item.strip()
-            if item:
-                values.append(int(item))
-        return frozenset(values)
 
     @cached_property
     def github_token_value(self) -> str | None:

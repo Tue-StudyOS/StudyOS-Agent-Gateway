@@ -1,6 +1,6 @@
 # Gateway Research Notes
 
-StudyOS Discord Agent follows the same broad shape as OpenClaw: one gateway process receives messages from external surfaces, resolves routing and permissions, then forwards work to an agent runtime.
+StudyOS Agent Gateway follows the same broad shape as OpenClaw: one gateway process receives messages from external surfaces, resolves routing and permissions, then forwards work to an agent runtime.
 
 ## OpenClaw Patterns Worth Reusing
 
@@ -11,12 +11,12 @@ Useful patterns:
 - Pairing or allowlists for unknown users before processing messages.
 - Guild/channel allowlists instead of a single global bot permission.
 - Mention-gated behavior in group channels.
-- Isolated sessions per Discord channel, slash command, user, or bound agent.
+- Isolated sessions per Discord channel, user, issue, PR, or bound agent.
 - Role-based routing to different agents.
 - Interactive Discord components for approval buttons and forms.
 - A control-plane mindset: the gateway owns routing, auth, and delivery; the agent owns reasoning and code work.
 
-The immediate version of this repo keeps a simpler shape: slash commands, mention-triggered messages, GitHub webhooks, and a periodic GitHub poller. The next major step should be session routing.
+The immediate version of this repo keeps a simpler shape: mention-triggered Discord messages, optional GitHub webhooks, and a periodic GitHub poller. The next major step should be session routing.
 
 ## Codex Surfaces
 

@@ -27,4 +27,4 @@ def test_build_triage_prompt_includes_prs_and_issues() -> None:
     assert "org/repo" in prompt
     assert "#1 Add wrapper" in prompt
     assert "#2 Document setup" in prompt
-    assert "Do not merge PRs" in prompt
+    assert "Never merge PRs" in prompt

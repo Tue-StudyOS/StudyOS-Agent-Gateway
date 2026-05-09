@@ -15,10 +15,13 @@ def build_triage_prompt(
     lines = [
         f"You are the StudyOS GitHub triage agent for {repository}.",
         "Inspect the current open PRs and issues below.",
-        "Unify duplicate work, identify stale or blocked items, and propose concrete next actions.",
-        "If the configured runtime has repository write access, you may implement small issues,",
-        "create branches/PRs, or comment on PRs when that is clearly useful.",
-        "Do not merge PRs unless branch protection and reviewer expectations are satisfied.",
+        "Unify duplicate work, identify stale or blocked items, invite reviewers, and propose",
+        "concrete next actions.",
+        "For issues, ask refinement questions and suggest acceptance criteria before",
+        "implementation.",
+        "If the configured runtime has repository write access, you may implement clearly scoped",
+        "issues by creating branches and pull requests.",
+        "Never merge PRs. Merging is reserved for StudyOS students through GitHub.",
         "",
         "Open pull requests:",
     ]

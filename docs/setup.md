@@ -4,11 +4,12 @@
 
 1. Create an application in the Discord Developer Portal.
 2. Add a bot user and copy the bot token into `DISCORD_TOKEN`.
-3. Invite the bot with `bot` and `applications.commands` scopes.
+3. Enable the message content intent.
+4. Invite the bot with the `bot` scope.
 4. Copy the target PR channel ID into `DISCORD_PR_CHANNEL_ID`.
-5. Optionally copy the server ID into `DISCORD_GUILD_ID` for faster slash command sync.
+5. Optionally copy the server ID into `DISCORD_GUILD_ID` so old slash commands can be cleared quickly.
 
-The bot does not need the privileged message-content intent for slash commands. Enable message content in the Discord Developer Portal only if `DISCORD_MESSAGE_AGENT_ENABLED=true` and you want `@bot please inspect this PR` style messages.
+StudyOS interaction is mention-first. Participants tag the bot in Discord when they want to brainstorm, ask for research, refine an issue, or start a scoped task.
 
 ## GitHub
 
@@ -16,16 +17,16 @@ The bot does not need the privileged message-content intent for slash commands. 
 2. Set the payload URL to `https://<host>/webhooks/github`.
 3. Set content type to `application/json`.
 4. Generate a random secret and put it in both GitHub and `GITHUB_WEBHOOK_SECRET`.
-5. Subscribe to pull request and issue events.
+5. Subscribe to pull request, issue, and issue comment events.
 
-For the agent-server flow, prefer `gh auth login` in the deployment container. Keep `GITHUB_TOKEN` only as a non-interactive fallback.
+Webhooks are optional. The simpler deployment is to authenticate `gh` and Codex in the container, then let Codex poll and navigate GitHub with the CLI on a schedule. Keep `GITHUB_TOKEN` only as a non-interactive read fallback.
 
 ## Deployment
 
 Run locally:
 
 ```bash
-studyos-discord-agent
+studyos-agent-gateway
 ```
 
 Run with Docker Compose:
@@ -45,7 +46,7 @@ The recommended StudyOS setup is:
 3. Deploy the agent image, which includes `gh`, `git`, SSH, Node/npm, and Codex.
 4. Authenticate `gh` and Codex inside the running container.
 5. Deploy this bot with `AGENT_COMMAND` pointing to the authenticated runtime.
-6. Keep GitHub write permissions behind role checks and branch protection.
+6. Keep GitHub writes behind branch protection and human PR merges.
 
 This lets the course share a few authenticated coding-agent instances instead of requiring every participant to own and configure one. Discord and GitHub become the common StudyOS interface.
 
@@ -58,11 +59,11 @@ export COURSE_REPO_PATH=/srv/studyos-monorepo
 AGENT_COMMAND="codex exec --full-auto --cd /workspace -"
 AGENT_WORKDIR=/workspace
 docker compose -f docker-compose.agent.yml up --build -d
-docker compose -f docker-compose.agent.yml exec studyos-discord-agent gh auth login
-docker compose -f docker-compose.agent.yml exec studyos-discord-agent codex login
+docker compose -f docker-compose.agent.yml exec studyos-agent-gateway gh auth login
+docker compose -f docker-compose.agent.yml exec studyos-agent-gateway codex login
 ```
 
-The provided agent image installs Node from the official Node image, GitHub CLI from GitHub's apt repository, and `@openai/codex` through npm. If your agent needs compilers, CUDA tools, or course-specific system packages, extend `Dockerfile.agent` for that course environment.
+The provided agent image installs Node from the official Node image, GitHub CLI from GitHub's apt repository, and `@openai/codex` through npm. If your agent needs compilers, browser tooling, CUDA tools, or course-specific system packages, extend `Dockerfile.agent` for that course environment.
 
 For Claude Code, run it directly on the host or build a sibling image with the Claude CLI installed:
 
@@ -71,7 +72,7 @@ AGENT_COMMAND="claude -p --permission-mode acceptEdits"
 AGENT_WORKDIR=/srv/studyos-monorepo
 ```
 
-Use `AGENT_AUTO_REVIEW_ENABLED=true` only after slash-command agent usage works reliably.
+Use `AGENT_AUTO_REVIEW_ENABLED=true` only after mention-based agent usage works reliably.
 
 ## Periodic GitHub Triage
 
@@ -85,7 +86,7 @@ GITHUB_POLL_LIMIT=20
 
 The bot will periodically list open PRs and issues, build one prompt, and invoke the agent. This is the safest shape for "every 15 or 30 minutes, check comments/issues/PRs and act" because scheduling remains outside Discord message handling and can be disabled independently.
 
-When `GITHUB_TOKEN` is not set, the poller and write helpers use `gh auth token`, so the container's `gh auth login` session is enough.
+When `GITHUB_TOKEN` is not set, the poller uses `gh auth token`, so the container's `gh auth login` session is enough. For more advanced scheduled work, Codex automations can skip the bot poller entirely and directly prompt Codex to inspect the repository with `gh`.
 
 ## External Agent Runtime
 

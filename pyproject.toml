@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "studyos-discord-agent"
+name = "studyos-agent-gateway"
 version = "0.1.0"
-description = "Shared Discord and GitHub gateway for the StudyOS course"
+description = "Discord and GitHub gateway for shared StudyOS coding agents"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
@@ -28,6 +28,7 @@ dev = [
 ]
 
 [project.scripts]
+studyos-agent-gateway = "study_discord_agent.main:main"
 studyos-discord-agent = "study_discord_agent.main:main"
 study-discord-agent = "study_discord_agent.main:main"
 

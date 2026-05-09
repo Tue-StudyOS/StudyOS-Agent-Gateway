@@ -57,6 +57,9 @@ class AgentGateway:
 
         full_prompt = (
             "You are running from the StudyOS Discord/GitHub collaboration gateway.\n"
+            "Collaborate with StudyOS participants in Discord and GitHub. Brainstorm, answer "
+            "technical questions, research when tools are available, refine issues, and create "
+            "implementation PRs only when scope is clear. Never merge pull requests.\n"
             f"Discord user: {user}\n"
             f"Discord channel id: {channel_id}\n\n"
             f"{prompt}\n"

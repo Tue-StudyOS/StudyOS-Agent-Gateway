@@ -40,16 +40,15 @@ Expected response:
 {"message": "summary to post back to Discord"}
 ```
 
-## Automatic PR Reviews
+## Automatic GitHub Follow-Up
 
-Set `AGENT_AUTO_REVIEW_ENABLED=true` to run the agent for `opened`, `ready_for_review`, and `synchronize` pull request events.
+Set `AGENT_AUTO_REVIEW_ENABLED=true` to run the agent for useful GitHub webhook events.
 
-The generated prompt asks for a Discord summary and explicitly tells the agent not to merge or close anything unless instructed. GitHub write access should still be controlled by:
+The generated prompts ask for PR review summaries, issue refinement questions, duplicate detection, and next steps. They explicitly tell the agent not to merge pull requests. GitHub write access should still be controlled by:
 
-- `GITHUB_WRITE_ENABLED`
-- fine-grained token scopes
-- Discord role allowlist
-- repository branch protection
+- `gh auth login` scopes
+- branch protection
+- human-only merge policy
 
 ## Cron And Scheduled Work
 
@@ -72,7 +71,7 @@ there is a useful update. Create branches and PRs for clearly scoped
 fixes. Do not merge or close work unless repository policy allows it.
 ```
 
-Keep those jobs in the Codex automation layer rather than reimplementing a scheduler in this bot when the work does not need Discord context. The bot-side poller remains useful when the result should immediately post into Discord or reuse the same agent command configured for Discord events.
+For StudyOS, prefer this simpler Codex automation when it is enough. Webhooks are only needed for low-latency updates into Discord or immediate issue-refinement prompts. The bot-side poller remains useful when the result should post into Discord or reuse the same agent command configured for Discord mentions.
 
 ## Authentication Model
 
@@ -91,8 +90,8 @@ Use runtime injection instead:
 The default agent compose file creates persistent `gh-auth` and `codex-auth` volumes. Log in once:
 
 ```bash
-docker compose -f docker-compose.agent.yml exec studyos-discord-agent gh auth login
-docker compose -f docker-compose.agent.yml exec studyos-discord-agent codex login
+docker compose -f docker-compose.agent.yml exec studyos-agent-gateway gh auth login
+docker compose -f docker-compose.agent.yml exec studyos-agent-gateway codex login
 ```
 
 After that, Discord mentions, GitHub webhooks, and the GitHub poller can invoke the authenticated tools without embedding tokens in the image.

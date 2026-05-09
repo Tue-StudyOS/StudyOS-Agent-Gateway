@@ -17,7 +17,7 @@ async def run() -> None:
     logging.basicConfig(level=settings.log_level.upper())
 
     queue: asyncio.Queue[DiscordNotification] = asyncio.Queue()
-    github = GitHubClient(settings.github_token_value, settings.github_write_enabled)
+    github = GitHubClient(settings.github_token_value)
     agent = AgentGateway(
         settings.agent_webhook_url,
         settings.agent_command,

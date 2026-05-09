@@ -12,7 +12,7 @@ def create_app(
     settings: Settings,
     queue: "asyncio.Queue[DiscordNotification]",
 ) -> FastAPI:
-    app = FastAPI(title="StudyOS Discord Agent")
+    app = FastAPI(title="StudyOS Agent Gateway")
 
     @app.get("/health")
     async def health() -> dict[str, str]:  # pyright: ignore[reportUnusedFunction]
