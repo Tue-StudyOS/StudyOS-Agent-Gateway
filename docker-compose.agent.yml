@@ -1,0 +1,15 @@
+services:
+  study-discord-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    env_file:
+      - .env
+    environment:
+      CODEX_HOME: /auth/codex
+    volumes:
+      - ${CODEX_HOME:-$HOME/.codex}:/auth/codex:ro
+      - ${COURSE_REPO_PATH:-./workspace}:/workspace
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
