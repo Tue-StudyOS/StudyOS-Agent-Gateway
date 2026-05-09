@@ -27,7 +27,7 @@ Codex has several useful integration surfaces.
 Good default for jobs triggered by Discord, GitHub webhooks, or polling:
 
 ```bash
-codex exec --full-auto --cd /workspace -
+codex exec --dangerously-bypass-approvals-and-sandbox --cd /workspace -
 ```
 
 The prompt is passed on stdin by this bot. For automation output, Codex supports JSON Lines:

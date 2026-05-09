@@ -58,7 +58,7 @@ For Codex and GitHub CLI auth inside the container:
 
 ```bash
 export COURSE_REPO_PATH=/srv/studyos-monorepo
-AGENT_COMMAND="codex exec --full-auto --cd /workspace -"
+AGENT_COMMAND="codex exec --dangerously-bypass-approvals-and-sandbox --cd /workspace -"
 AGENT_WORKDIR=/workspace
 docker compose -f docker-compose.agent.yml up --build -d
 docker compose -f docker-compose.agent.yml exec studyos-agent-gateway gh auth login

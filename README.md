@@ -66,7 +66,7 @@ docker compose up --build
 For an agent-enabled Codex container:
 
 ```bash
-AGENT_COMMAND="codex exec --full-auto --cd /workspace -"
+AGENT_COMMAND="codex exec --dangerously-bypass-approvals-and-sandbox --cd /workspace -"
 AGENT_WORKDIR=/workspace
 COURSE_REPO_PATH=/path/to/studyos-monorepo
 docker compose -f docker-compose.agent.yml up --build
@@ -139,7 +139,7 @@ The bot does not embed one specific agent framework. Instead, Discord mentions, 
 Examples:
 
 ```bash
-AGENT_COMMAND="codex exec --full-auto --cd /workspace -"
+AGENT_COMMAND="codex exec --dangerously-bypass-approvals-and-sandbox --cd /workspace -"
 AGENT_COMMAND="claude -p --permission-mode acceptEdits"
 AGENT_COMMAND="/opt/picoclaw/bin/picoclaw run --stdin"
 ```
