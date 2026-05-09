@@ -66,10 +66,17 @@ docker compose up --build
 For an agent-enabled Codex container:
 
 ```bash
-AGENT_COMMAND="codex exec --json -m gpt-5.5 -c model_reasoning_effort=high --dangerously-bypass-approvals-and-sandbox --cd /workspace -"
+AGENT_COMMAND="codex exec --json --dangerously-bypass-approvals-and-sandbox --cd /workspace -"
 AGENT_WORKDIR=/workspace
 COURSE_REPO_PATH=/path/to/studyos-monorepo
 docker compose -f docker-compose.agent.yml up --build
+```
+
+Set the Codex defaults once inside the persisted `codex-auth` volume:
+
+```toml
+model = "gpt-5.5"
+model_reasoning_effort = "high"
 ```
 
 Authenticate the CLIs once inside the running container:
@@ -139,7 +146,7 @@ The bot does not embed one specific agent framework. Instead, Discord mentions, 
 Examples:
 
 ```bash
-AGENT_COMMAND="codex exec --json -m gpt-5.5 -c model_reasoning_effort=high --dangerously-bypass-approvals-and-sandbox --cd /workspace -"
+AGENT_COMMAND="codex exec --json --dangerously-bypass-approvals-and-sandbox --cd /workspace -"
 AGENT_COMMAND="claude -p --permission-mode acceptEdits"
 AGENT_COMMAND="/opt/picoclaw/bin/picoclaw run --stdin"
 ```

@@ -9,8 +9,15 @@ Use `AGENT_COMMAND` when the bot and agent run on the same server or inside the 
 The prompt is sent through stdin. This avoids shell interpolation of untrusted Discord text.
 
 ```bash
-AGENT_COMMAND="codex exec --json -m gpt-5.5 -c model_reasoning_effort=high --dangerously-bypass-approvals-and-sandbox --cd /workspace -"
+AGENT_COMMAND="codex exec --json --dangerously-bypass-approvals-and-sandbox --cd /workspace -"
 AGENT_WORKDIR=/workspace
+```
+
+Set the default model in `$CODEX_HOME/config.toml` so every gateway invocation uses the same Codex profile:
+
+```toml
+model = "gpt-5.5"
+model_reasoning_effort = "high"
 ```
 
 Other examples:
