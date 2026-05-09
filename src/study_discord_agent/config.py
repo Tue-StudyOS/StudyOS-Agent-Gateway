@@ -9,9 +9,9 @@ class Settings(BaseSettings):
 
     discord_token: SecretStr
     discord_guild_id: int | None = None
-    discord_pr_channel_id: int
+    discord_pr_channel_id: int | None = None
 
-    github_webhook_secret: SecretStr
+    github_webhook_secret: SecretStr | None = None
     github_token: SecretStr | None = None
     github_repository: str | None = None
 
@@ -31,6 +31,13 @@ class Settings(BaseSettings):
     port: int = 8080
     log_level: str = "info"
 
+    @field_validator("discord_guild_id", "discord_pr_channel_id", mode="before")
+    @classmethod
+    def empty_string_to_none(cls, value: object) -> object:
+        if value == "":
+            return None
+        return value
+
     @field_validator("github_repository")
     @classmethod
     def validate_repository(cls, value: str | None) -> str | None:
@@ -45,8 +52,10 @@ class Settings(BaseSettings):
         return self.github_token.get_secret_value() if self.github_token else None
 
     @cached_property
-    def webhook_secret_value(self) -> str:
-        return self.github_webhook_secret.get_secret_value()
+    def webhook_secret_value(self) -> str | None:
+        if not self.github_webhook_secret:
+            return None
+        return self.github_webhook_secret.get_secret_value() or None
 
     @cached_property
     def discord_token_value(self) -> str:

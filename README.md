@@ -85,7 +85,7 @@ docker compose -f docker-compose.agent.yml exec studyos-agent-gateway codex logi
 | --- | --- |
 | `DISCORD_TOKEN` | Discord bot token |
 | `DISCORD_GUILD_ID` | Optional guild ID used to clear old commands faster |
-| `DISCORD_PR_CHANNEL_ID` | Discord channel ID for GitHub notifications |
+| `DISCORD_PR_CHANNEL_ID` | Discord channel ID for GitHub notifications and poller summaries |
 | `GITHUB_WEBHOOK_SECRET` | Secret configured on the GitHub webhook |
 | `GITHUB_TOKEN` | Optional fallback token; `gh auth login` is the preferred agent-server path |
 | `GITHUB_REPOSITORY` | Default repository in `owner/name` form |
@@ -117,6 +117,8 @@ Recommended events if you want webhook-triggered updates:
 - Issue comments
 
 Set the webhook content type to `application/json` and use the same secret as `GITHUB_WEBHOOK_SECRET`.
+
+For mention-only testing, you can skip GitHub webhooks. Set `GITHUB_WEBHOOK_SECRET` and `DISCORD_PR_CHANNEL_ID` when you want GitHub events or scheduled triage summaries to post into Discord.
 
 ## GitHub Permissions
 

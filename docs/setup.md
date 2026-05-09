@@ -6,7 +6,7 @@
 2. Add a bot user and copy the bot token into `DISCORD_TOKEN`.
 3. Enable the message content intent.
 4. Invite the bot with the `bot` scope.
-4. Copy the target PR channel ID into `DISCORD_PR_CHANNEL_ID`.
+4. Copy the target PR channel ID into `DISCORD_PR_CHANNEL_ID` if you want GitHub notifications or poller summaries.
 5. Optionally copy the server ID into `DISCORD_GUILD_ID` so old slash commands can be cleared quickly.
 
 StudyOS interaction is mention-first. Participants tag the bot in Discord when they want to brainstorm, ask for research, refine an issue, or start a scoped task.
@@ -20,6 +20,8 @@ StudyOS interaction is mention-first. Participants tag the bot in Discord when t
 5. Subscribe to pull request, issue, and issue comment events.
 
 Webhooks are optional. The simpler deployment is to authenticate `gh` and Codex in the container, then let Codex poll and navigate GitHub with the CLI on a schedule. Keep `GITHUB_TOKEN` only as a non-interactive read fallback.
+
+For a first Discord-only smoke test, you only need `DISCORD_TOKEN`, `DISCORD_MESSAGE_AGENT_ENABLED=true`, and either `AGENT_COMMAND` or `AGENT_WEBHOOK_URL`.
 
 ## Deployment
 

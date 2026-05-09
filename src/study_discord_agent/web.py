@@ -26,6 +26,8 @@ def create_app(
     ) -> dict[str, str]:
         if not x_github_event:
             raise HTTPException(status_code=400, detail="Missing X-GitHub-Event header")
+        if not settings.webhook_secret_value:
+            raise HTTPException(status_code=503, detail="GitHub webhooks are not configured")
 
         body = await request.body()
         if not verify_github_signature(

@@ -45,9 +45,12 @@ class StudyBot(commands.Bot):
                 self.queue.task_done()
 
     async def publish_notification(self, notification: DiscordNotification) -> None:
-        channel = self.get_channel(self.settings.discord_pr_channel_id)
+        if self.settings.discord_pr_channel_id is None:
+            raise RuntimeError("DISCORD_PR_CHANNEL_ID is required for GitHub notifications")
+        channel_id = self.settings.discord_pr_channel_id
+        channel = self.get_channel(channel_id)
         if channel is None:
-            channel = await self.fetch_channel(self.settings.discord_pr_channel_id)
+            channel = await self.fetch_channel(channel_id)
         if not isinstance(channel, discord.abc.Messageable):
             raise RuntimeError("Configured Discord PR channel is not messageable")
 
@@ -65,16 +68,19 @@ class StudyBot(commands.Bot):
                 reply = await self.agent.ask(
                     prompt=notification.agent_prompt,
                     user="github-webhook",
-                    channel_id=self.settings.discord_pr_channel_id,
+                    channel_id=channel_id,
                 )
                 await channel.send(reply.message[:1900])
             except RuntimeError as exc:
                 await channel.send(f"Agent review failed: {exc}")
 
     async def publish_agent_message(self, message: str) -> None:
-        channel = self.get_channel(self.settings.discord_pr_channel_id)
+        if self.settings.discord_pr_channel_id is None:
+            raise RuntimeError("DISCORD_PR_CHANNEL_ID is required for GitHub triage messages")
+        channel_id = self.settings.discord_pr_channel_id
+        channel = self.get_channel(channel_id)
         if channel is None:
-            channel = await self.fetch_channel(self.settings.discord_pr_channel_id)
+            channel = await self.fetch_channel(channel_id)
         if not isinstance(channel, discord.abc.Messageable):
             raise RuntimeError("Configured Discord PR channel is not messageable")
         await channel.send(message[:1900])
