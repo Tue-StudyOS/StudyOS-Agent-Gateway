@@ -27,6 +27,10 @@ The Python service receives Discord mentions and optional GitHub webhooks, then 
 - Agent runner through `AGENT_COMMAND`, or external bridge through `AGENT_WEBHOOK_URL`.
 - Local `studyos-discord-context` tool so agents can fetch recent channel context on demand.
 - Codex channel sessions: Discord channels can resume their own persisted Codex CLI session.
+- Discord attachment handoff: uploaded files are saved locally and image attachments are passed to Codex with `-i` when possible.
+- Discord artifact uploads: agents can return generated diagrams, images, or documents for the bot to post back into the channel.
+- `studyos-render-diagram` helper for rendering Graphviz DOT diagrams to PNG/SVG/PDF inside the agent image.
+- Disabled-by-default proactive channel monitor scaffold for deployments that want opt-in discussion nudges.
 - Optional PR review summaries and issue refinement prompts on GitHub webhook events.
 - Periodic GitHub triage loop for open PRs and issues.
 - Seeded Codex app automation templates for triage, review nudges, issue refinement, implementation candidate discovery, a coordinator heartbeat, and a weekly digest.
@@ -44,7 +48,7 @@ flowchart TD
     Poller["GitHub poller"] --> Bot
     Bot --> Runner["Agent runner"]
     Runner --> Codex["Codex CLI or other agent CLI"]
-    Codex --> Workspace["/workspace StudyOS repo"]
+    Codex --> Workspaces["/workspaces cloned repos"]
     Codex --> GHCLI["authenticated gh CLI"]
     GHCLI --> GitHubRepo["GitHub issues and PRs"]
     Bot --> Channel["Discord GitHub channel"]
@@ -52,7 +56,7 @@ flowchart TD
     Memory["StudyOS memory"] --> CodexHome
 ```
 
-The gateway owns Discord, webhook intake, lightweight polling, prompt assembly, and delivery back to Discord. The agent runtime owns reasoning and repository work inside `/workspace`. Codex app automations are seeded as paused templates and can be enabled by a deployment that has a real Codex automation runner.
+The gateway owns Discord, webhook intake, lightweight polling, prompt assembly, and delivery back to Discord. The agent runtime owns reasoning and repository work in cloned repositories under `/workspaces`. Codex app automations are seeded as paused templates and can be enabled by a deployment that has a real Codex automation runner.
 
 ## Quick Start
 
@@ -76,9 +80,8 @@ docker compose up --build
 For an agent-enabled Codex container:
 
 ```bash
-AGENT_COMMAND="codex exec --json --dangerously-bypass-approvals-and-sandbox --cd /workspace -"
-AGENT_WORKDIR=/workspace
-COURSE_REPO_PATH=/path/to/studyos-monorepo
+AGENT_COMMAND="codex exec --json --dangerously-bypass-approvals-and-sandbox --cd /workspaces -"
+AGENT_WORKDIR=/workspaces
 docker compose -f docker-compose.agent.yml up --build
 ```
 
@@ -89,11 +92,19 @@ model = "gpt-5.5"
 model_reasoning_effort = "high"
 ```
 
+The agent image is only the harness: Discord/GitHub gateway, Codex CLI, GitHub
+CLI, auth volumes, and instructions. It does not need a course repository baked
+in or mounted at build time. Students can share GitHub URLs in Discord; the
+agent can clone/fetch them into the persistent `/workspaces` volume and work
+there.
+
 On startup the gateway seeds `$CODEX_HOME/AGENTS.md` and
-`$CODEX_HOME/memories/studyos-course.md` if they do not exist. Global
-`AGENTS.md` makes Codex inherit reusable working agreements in the Docker
-runtime, while the memory file is the StudyOS project entry point for course
-context, product direction, collaboration policy, and tone.
+`$CODEX_HOME/memories/studyos-course.md` if they do not exist. The canonical
+course memory lives in `codex/memories/studyos-course.md` in this repository;
+the Docker runtime copies it into Codex home. Global `AGENTS.md` makes Codex
+inherit reusable working agreements in the Docker runtime, while the memory
+file is the StudyOS project entry point for course context, product direction,
+collaboration policy, and tone.
 
 Discord prompts also include the source channel and message id. When a request depends on previous Discord discussion, the agent is instructed to run the local context tool instead of guessing:
 
@@ -113,6 +124,23 @@ implementation work when appropriate. That keeps separate group channels or
 subtasks from editing the same checkout at once. If a runtime exposes subagents
 or delegation tools, Codex is instructed to use them for independent subtasks;
 otherwise it should continue locally and say that subagents are unavailable.
+
+Discord attachments on a mention are downloaded into `DISCORD_ATTACHMENT_DIR`.
+Image attachments are passed to Codex CLI through `-i` in addition to being
+listed in the prompt. When an agent creates a file that should be posted back to
+Discord, it returns a final JSON object:
+
+```json
+{"message": "diagram ready", "files": ["/tmp/studyos-artifacts/flow.png"]}
+```
+
+The gateway also detects local file links like
+`[slides.pdf](/workspace/output/slides.pdf)` in plain agent replies and uploads
+those files in the same Discord response. Local paths are not useful to Discord
+users, so file requests should produce attachments by default. The gateway only
+uploads files under `DISCORD_ARTIFACT_ALLOWED_ROOTS`, with
+`/tmp/studyos-artifacts`, `/workspaces`, and legacy `/workspace` allowed by
+default.
 
 It also seeds paused Codex app automation templates at `$CODEX_HOME/automation-templates/`. Set `STUDYOS_SEED_ACTIVE_AUTOMATIONS=true` only when the target `CODEX_HOME` is managed by a Codex app automation runner and you want the templates copied into `$CODEX_HOME/automations`.
 
@@ -136,6 +164,13 @@ docker compose -f docker-compose.agent.yml exec studyos-agent-gateway codex logi
 | `GITHUB_POLL_ENABLED` | Periodically asks the agent to triage open PRs/issues |
 | `GITHUB_POLL_INTERVAL_SECONDS` | Poll interval, for example `900` or `1800` |
 | `DISCORD_MESSAGE_AGENT_ENABLED` | Enables mention-based Discord collaboration |
+| `DISCORD_ATTACHMENT_DIR` | Local directory for Discord message attachments |
+| `DISCORD_ARTIFACT_ALLOWED_ROOTS` | Comma-separated roots the bot may upload files from |
+| `DISCORD_ARTIFACT_MAX_BYTES` | Maximum generated file size for Discord upload |
+| `DISCORD_PROACTIVE_AGENT_ENABLED` | Enables the opt-in proactive monitor across visible Discord channels |
+| `DISCORD_PROACTIVE_INTERVAL_SECONDS` | Proactive monitor interval |
+| `DISCORD_PROACTIVE_RECENT_ACTIVITY_SECONDS` | Maximum age of latest human message before a channel is skipped |
+| `DISCORD_PROACTIVE_DRY_RUN` | Logs proactive replies instead of sending them |
 | `AGENT_COMMAND` | Local agent CLI command, prompt is passed on stdin |
 | `AGENT_WORKDIR` | Working directory for the agent command |
 | `AGENT_TIMEOUT_SECONDS` | Max runtime for one agent invocation |
@@ -186,7 +221,7 @@ The bot does not embed one specific agent framework. Instead, Discord mentions, 
 Examples:
 
 ```bash
-AGENT_COMMAND="codex exec --json --dangerously-bypass-approvals-and-sandbox --cd /workspace -"
+AGENT_COMMAND="codex exec --json --dangerously-bypass-approvals-and-sandbox --cd /workspaces -"
 AGENT_COMMAND="claude -p --permission-mode acceptEdits"
 AGENT_COMMAND="/opt/picoclaw/bin/picoclaw run --stdin"
 ```
@@ -216,6 +251,12 @@ Codex automation templates are seeded separately under `$CODEX_HOME/automation-t
 - `studyos-weekly-digest`: Thursday 16:00 course progress digest.
 
 The image contains tools, not credentials. Do not bake GitHub auth, Codex auth, Claude auth, SSH keys, or Discord tokens into the image.
+
+Agents can create diagrams with Graphviz in the agent image:
+
+```bash
+studyos-render-diagram --input /tmp/studyos-artifacts/flow.dot --output /tmp/studyos-artifacts/flow.png
+```
 
 ## Development
 

@@ -44,7 +44,8 @@ Expose port `8080` through a reverse proxy or tunnel for GitHub webhooks.
 The recommended StudyOS setup is:
 
 1. Provision a small server or VM.
-2. Clone the StudyOS course monorepo onto that server.
+2. Deploy the gateway harness; repositories can be cloned on demand into the
+   persistent `/workspaces` volume.
 3. Deploy the agent image, which includes `gh`, `git`, SSH, Node/npm, and Codex.
 4. Authenticate `gh` and Codex inside the running container.
 5. Deploy this bot with `AGENT_COMMAND` pointing to the authenticated runtime.
@@ -57,21 +58,30 @@ The image contains tooling, but authentication belongs in Docker volumes, mounte
 For Codex and GitHub CLI auth inside the container:
 
 ```bash
-export COURSE_REPO_PATH=/srv/studyos-monorepo
-AGENT_COMMAND="codex exec --json --dangerously-bypass-approvals-and-sandbox --cd /workspace -"
-AGENT_WORKDIR=/workspace
+AGENT_COMMAND="codex exec --json --dangerously-bypass-approvals-and-sandbox --cd /workspaces -"
+AGENT_WORKDIR=/workspaces
 docker compose -f docker-compose.agent.yml up --build -d
 docker compose -f docker-compose.agent.yml exec studyos-agent-gateway gh auth login
 docker compose -f docker-compose.agent.yml exec studyos-agent-gateway codex login
 ```
 
-The provided agent image installs Node from the official Node image, GitHub CLI from GitHub's apt repository, and `@openai/codex` through npm. If your agent needs compilers, browser tooling, CUDA tools, or course-specific system packages, extend `Dockerfile.agent` for that course environment.
+The provided agent image installs Node from the official Node image, GitHub CLI
+from GitHub's apt repository, Graphviz for rendered diagrams, and
+`@openai/codex` through npm. If your agent needs compilers, browser tooling,
+CUDA tools, or course-specific system packages, extend `Dockerfile.agent` for
+that course environment.
+
+For richer Discord interactions, generated files should be written under
+`/tmp/studyos-artifacts` or `/workspaces`. The bot validates artifact paths
+against `DISCORD_ARTIFACT_ALLOWED_ROOTS` before upload. Start proactive
+Discord participation with `DISCORD_PROACTIVE_DRY_RUN=true`; only set it to
+`false` after testing in a low-risk server.
 
 For Claude Code, run it directly on the host or build a sibling image with the Claude CLI installed:
 
 ```bash
 AGENT_COMMAND="claude -p --permission-mode acceptEdits"
-AGENT_WORKDIR=/srv/studyos-monorepo
+AGENT_WORKDIR=/workspaces
 ```
 
 Use `AGENT_AUTO_REVIEW_ENABLED=true` only after mention-based agent usage works reliably.

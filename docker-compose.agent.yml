@@ -11,7 +11,7 @@ services:
     volumes:
       - codex-auth:/auth/codex
       - gh-auth:/auth/gh
-      - ${COURSE_REPO_PATH:-./workspace}:/workspace
+      - agent-workspaces:/workspaces
     ports:
       - "8080:8080"
     restart: unless-stopped
@@ -19,3 +19,4 @@ services:
 volumes:
   codex-auth:
   gh-auth:
+  agent-workspaces:

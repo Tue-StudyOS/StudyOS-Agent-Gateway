@@ -9,9 +9,15 @@ Use `AGENT_COMMAND` when the bot and agent run on the same server or inside the 
 The prompt is sent through stdin. This avoids shell interpolation of untrusted Discord text.
 
 ```bash
-AGENT_COMMAND="codex exec --json --dangerously-bypass-approvals-and-sandbox --cd /workspace -"
-AGENT_WORKDIR=/workspace
+AGENT_COMMAND="codex exec --json --dangerously-bypass-approvals-and-sandbox --cd /workspaces -"
+AGENT_WORKDIR=/workspaces
 ```
+
+The agent image is intentionally only the harness: Discord/GitHub gateway,
+Codex CLI, GitHub CLI, auth volumes, and instructions. It does not need a
+course repository baked in or mounted at build time. Repositories can be cloned
+or fetched into the persistent `/workspaces` volume when students share GitHub
+URLs or ask the agent to work on a project.
 
 Set the default model in `$CODEX_HOME/config.toml` so every gateway invocation uses the same Codex profile:
 
@@ -22,7 +28,9 @@ model_reasoning_effort = "high"
 
 The gateway also seeds `$CODEX_HOME/AGENTS.md` and
 `$CODEX_HOME/memories/studyos-course.md` on startup if they do not already
-exist. The global `AGENTS.md` carries reusable working agreements into the
+exist. The canonical course memory is versioned at
+`codex/memories/studyos-course.md`; the Docker runtime copies that Markdown into
+Codex home. The global `AGENTS.md` carries reusable working agreements into the
 Docker Codex runtime. Discord requests point Codex at the StudyOS memory entry
 point instead of injecting the full course/project context into every prompt.
 
@@ -45,6 +53,43 @@ Discord. This is useful for sending generated files or images back to a channel.
 The token is inherited from the gateway environment; agents must not print or
 commit it, and should not send/edit/delete Discord content without a direct
 human request.
+
+## Discord Files And Diagrams
+
+When a Discord mention includes attachments, the gateway saves them under
+`DISCORD_ATTACHMENT_DIR` and lists the paths in the agent prompt. If the
+attachment is an image and the configured command is `codex exec`, the gateway
+also passes the image path with `-i` so Codex can inspect it directly.
+
+Agents can ask the bot to upload generated files by returning a final JSON
+message with `message` and `files`:
+
+```json
+{"message": "diagram ready", "files": ["/tmp/studyos-artifacts/flow.png"]}
+```
+
+The gateway also catches plain Markdown links to local generated files, such as
+`[slides.pdf](/workspace/output/slides.pdf)`, and uploads them in the same
+Discord reply. Agents should still prefer the JSON protocol because it avoids
+leaking unusable local paths into chat.
+
+The gateway validates generated files before sending them. By default only
+`/tmp/studyos-artifacts`, `/workspaces`, and legacy `/workspace` are uploadable
+roots. This keeps auth volumes and logs from being posted accidentally.
+
+For simple architecture or workflow diagrams, the agent image includes
+Graphviz and the helper CLI:
+
+```bash
+studyos-render-diagram --input /tmp/studyos-artifacts/flow.dot --output /tmp/studyos-artifacts/flow.png
+```
+
+The proactive Discord monitor is disabled by default. When enabled, it scans
+visible Discord message channels on an interval and asks the agent whether one
+short reply is useful. Channels are skipped unless their latest human message is
+recent according to `DISCORD_PROACTIVE_RECENT_ACTIVITY_SECONDS`. Keep
+`DISCORD_PROACTIVE_DRY_RUN=true` until behavior is trusted in a real course
+server.
 
 ## Channel Sessions
 
@@ -70,7 +115,8 @@ sessions.
 
 Channel sessions still share the configured `AGENT_WORKDIR` by default. For
 implementation tasks that should run in parallel across groups or subtasks,
-Codex is prompted to create or use isolated git worktrees before editing files.
+Codex is prompted to clone/fetch target repositories into `/workspaces` and
+create or use isolated git worktrees before editing files.
 Prefer task- or channel-specific branch names, verify project-local worktree
 directories are ignored, and keep commits grouped logically. If the active Codex
 runtime exposes subagents or delegation tools, the prompt tells Codex to use

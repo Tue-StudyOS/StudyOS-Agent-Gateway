@@ -14,7 +14,8 @@ WORKDIR /app
 COPY --from=node-runtime /usr/local/ /usr/local/
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates curl git openssh-client \
+  && apt-get install -y --no-install-recommends \
+    ca-certificates curl git graphviz openssh-client \
   && mkdir -p -m 755 /etc/apt/keyrings \
   && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
@@ -28,6 +29,7 @@ RUN apt-get update \
 RUN if [ "$INSTALL_CODEX" = "true" ]; then npm install -g @openai/codex; fi
 
 COPY pyproject.toml README.md LICENSE ./
+COPY codex ./codex
 COPY src ./src
 
 RUN pip install --no-cache-dir .

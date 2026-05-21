@@ -13,10 +13,15 @@ def test_ensure_studyos_memory_creates_default_entrypoint(tmp_path: Path) -> Non
     assert "Modern Agentic" in text
     assert "experienced co-developer" in text
     assert "Discord-native thinking partner" in text
+    assert "student-provided\n  repository URL" in text
+    assert "Do not assume\n  the main wrapper repository" in text
     assert "lightweight specification sheets" in text
     assert "compute and maintenance costs" in text
     assert "official\n  documentation" in text
     assert "acceptance criteria rather than" in text
+    assert "strong modularity target" in text
+    assert "GitHub Actions" in text
+    assert "credential-handling" in text
     assert "Codex Runtime And Automations" in text
     assert "Python heartbeat" not in text
     assert "automation templates" in text
@@ -31,6 +36,9 @@ def test_ensure_global_agents_creates_codex_home_guidance(tmp_path: Path) -> Non
     assert "Build your own StudyOS" in text
     assert "environment where the shared Codex agent" in text
     assert "belongs to the agent runtime" in text
+    assert "image is a harness" in text
+    assert "/workspaces" in text
+    assert "share URLs\nin Discord or GitHub" in text
     assert "$CODEX_HOME/memories/studyos-course.md" in text
     assert "do not route student credentials" in text
     assert "do not silently reject or skip" in text
@@ -40,6 +48,9 @@ def test_ensure_global_agents_creates_codex_home_guidance(tmp_path: Path) -> Non
     assert "unnecessary\ncompute cost" in text
     assert "test-driven development where practical" in text
     assert "acceptance criteria" in text
+    assert "not a hard mechanical limit" in text
+    assert "coherent\nnaming and formatting patterns" in text
+    assert "CI/GitHub Actions" in text
     assert "short Discord-friendly answers" in text
     assert "keep the discussion flowing" in text
     assert "substantive work such as research" in text
@@ -66,6 +77,8 @@ def test_build_agent_prompt_points_to_memory(tmp_path: Path) -> None:
     assert "Discord source message id: 456" in prompt
     assert "studyos-discord-context --channel-id <channel_id>" in prompt
     assert "send files/images" in prompt
+    assert "Always attach files" in prompt
+    assert "local paths are not usable in Discord" in prompt
     assert "Never print or commit the token" in prompt
     assert "isolated git worktrees" in prompt
     assert "subagents or delegation tools" in prompt
@@ -85,6 +98,20 @@ def test_ensure_studyos_memory_appends_missing_sections(tmp_path: Path) -> None:
     assert "Local notes stay here." in text
     assert "Codex Runtime And Automations" in text
     assert "Python heartbeat" not in text
+
+
+def test_ensure_studyos_memory_repairs_incomplete_seed(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memories"
+    memory_dir.mkdir()
+    path = memory_dir / "studyos-course.md"
+    path.write_text("\n\n## Codex Runtime And Automations\n\nOld partial seed.\n", encoding="utf-8")
+
+    ensure_studyos_memory(str(tmp_path))
+    text = path.read_text(encoding="utf-8")
+
+    assert text.startswith("# StudyOS Agent Memory")
+    assert "Discord-native thinking partner" in text
+    assert "attach it in the Discord reply" in text
 
 
 def test_default_memory_includes_credential_policy(tmp_path: Path) -> None:
