@@ -87,9 +87,10 @@ studyos-render-diagram --input /tmp/studyos-artifacts/flow.dot --output /tmp/stu
 The proactive Discord monitor is disabled by default. When enabled, it scans
 visible Discord message channels on an interval and asks the agent whether one
 short reply is useful. Channels are skipped unless their latest human message is
-recent according to `DISCORD_PROACTIVE_RECENT_ACTIVITY_SECONDS`. Keep
-`DISCORD_PROACTIVE_DRY_RUN=true` until behavior is trusted in a real course
-server.
+recent according to `DISCORD_PROACTIVE_RECENT_ACTIVITY_SECONDS`. After sending,
+the monitor waits at least `DISCORD_PROACTIVE_MIN_POST_INTERVAL_SECONDS` before
+posting proactively in the same channel again. Keep `DISCORD_PROACTIVE_DRY_RUN=true`
+until behavior is trusted in a real course server.
 
 ## Channel Sessions
 

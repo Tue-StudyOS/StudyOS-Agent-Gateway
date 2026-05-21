@@ -67,6 +67,16 @@ the user, code patterns, official documentation, and best practices. Turn the
 request into lightweight acceptance criteria, then implement against it. Use
 test-driven development where practical.
 
+For StudyOS/Tue API wrapper work, first map what data and capabilities already
+exist, what is realistically obtainable, and what can be reused. Avoid
+re-implementing the same clients, parsers, schemas, or UI patterns in every
+project when shared StudyOS pieces already exist.
+
+Help discussions move from brainstorming to feasibility research, then to
+issue/spec creation, implementation, PR, and human review. Proactively suggest
+creating an issue when an idea is ready, and suggest implementation when an
+issue looks ready, but ask before doing large repository-changing work.
+
 ## Communication style
 
 - Be direct, pragmatic, concise, and easy to talk to.
@@ -75,6 +85,9 @@ test-driven development where practical.
 - Prefer short Discord-friendly answers that keep the discussion flowing. Use
   longer structure for depth or substantive work such as research, issue
   creation, PR creation, implementation, debugging, or review.
+- Participate proactively only when it adds value. Prefer silence over spam,
+  do not send several follow-ups in a row, and wait for new human discussion
+  before speaking again after contributing.
 - For implementation work, explain what changed, what was verified, and what
   remains.
 - Use light humor naturally; never force memes, bits, or jokes.
@@ -83,6 +96,46 @@ test-driven development where practical.
 For recurring project-specific learnings, you may create gitignored
 `.learnings/` or `.journal/` Markdown files. When asked to work for hours or
 overnight, use Codex automations and check the time to measure time spent.
+"""
+
+GLOBAL_AUTOMATION_SECTION = """## Codex Automations
+
+Codex automation state is file-based:
+
+- Active Codex app automations live under
+  `$CODEX_HOME/automations/<automation-id>/automation.toml`.
+- Automation run notes or task-specific memory live next to them as
+  `$CODEX_HOME/automations/<automation-id>/memory.md`.
+- Reviewable templates live under
+  `$CODEX_HOME/automation-templates/<template-id>/`.
+- Repository-seeded Codex files live under `codex/` in this gateway repo and
+  are copied or seeded into the runtime Codex home.
+
+When asked to create or adjust automations, edit those TOML/Markdown files or
+use Codex app automation tooling. Do not create Python helper scripts, daemon
+processes, external schedulers, or runtime hooks unless the user explicitly asks
+for that implementation.
+
+When asked to update an existing automation, inspect
+`$CODEX_HOME/automations/*/automation.toml` and
+`$CODEX_HOME/automation-templates/*/automation.toml` for a matching id, name,
+or prompt. Preserve existing fields unless the user asks to change them. To
+pause or activate an automation, change `status`; to change frequency, update
+`rrule`; to change what it does, edit `prompt` and any adjacent `memory.md`
+that belongs to that automation.
+
+To pause or activate an automation, change `status`. To change frequency,
+change `rrule`. To change behavior, edit `prompt` and the adjacent `memory.md`
+when that memory belongs to the same automation.
+
+`automation.toml` should be explicit and reviewable. Include the prompt, status,
+schedule, model/reasoning settings, workspace directories, and execution
+environment where relevant. Prefer paused templates when the user has not
+clearly asked to enable a live recurring job.
+
+Keep automation prompts self-contained: describe the task, expected output,
+human approval boundaries, and what the automation must not do. Never configure
+automations to merge PRs or handle secrets without explicit human approval.
 """
 
 AUTOMATION_MEMORY_SECTION = """## Codex Runtime And Automations
@@ -158,7 +211,10 @@ def ensure_global_agents(codex_home: str | None) -> Path:
     path = get_global_agents_path(codex_home)
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
-        path.write_text(DEFAULT_GLOBAL_AGENTS, encoding="utf-8")
+        path.write_text(_refresh_global_agents(DEFAULT_GLOBAL_AGENTS), encoding="utf-8")
+    else:
+        text = path.read_text(encoding="utf-8")
+        path.write_text(_refresh_global_agents(text), encoding="utf-8")
     return path
 
 
@@ -176,7 +232,47 @@ def ensure_studyos_memory(codex_home: str | None) -> Path:
 def _refresh_studyos_memory(text: str) -> str:
     if "# StudyOS Agent Memory" not in text:
         return read_default_studyos_memory()
-    return _upsert_automation_section(text)
+    return _upsert_managed_sections(text)
+
+
+def _refresh_global_agents(text: str) -> str:
+    if "# Global Codex Guidance" not in text:
+        return text
+    if "## Codex Automations" in text:
+        return text
+    return text.rstrip() + "\n\n" + GLOBAL_AUTOMATION_SECTION
+
+
+def _upsert_managed_sections(text: str) -> str:
+    refreshed = text
+    default_memory = read_default_studyos_memory()
+    for heading in (
+        "## Proactive Discord Participation",
+        "## Product Discovery And Reuse",
+        "## Delivery Lifecycle",
+    ):
+        if heading not in refreshed:
+            refreshed = _insert_before_heading(
+                refreshed,
+                _extract_section(default_memory, heading),
+                "## GitHub Workflow",
+            )
+    return _upsert_automation_section(refreshed)
+
+
+def _extract_section(text: str, heading: str) -> str:
+    start = text.index(heading)
+    next_heading = text.find("\n## ", start + len(heading))
+    if next_heading == -1:
+        return text[start:].strip()
+    return text[start:next_heading].strip()
+
+
+def _insert_before_heading(text: str, section: str, before_heading: str) -> str:
+    if before_heading not in text:
+        return text.rstrip() + "\n\n" + section + "\n"
+    index = text.index(before_heading)
+    return text[:index].rstrip() + "\n\n" + section + "\n\n" + text[index:].lstrip()
 
 
 def _upsert_automation_section(text: str) -> str:

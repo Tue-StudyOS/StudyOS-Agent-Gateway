@@ -170,6 +170,7 @@ docker compose -f docker-compose.agent.yml exec studyos-agent-gateway codex logi
 | `DISCORD_PROACTIVE_AGENT_ENABLED` | Enables the opt-in proactive monitor across visible Discord channels |
 | `DISCORD_PROACTIVE_INTERVAL_SECONDS` | Proactive monitor interval |
 | `DISCORD_PROACTIVE_RECENT_ACTIVITY_SECONDS` | Maximum age of latest human message before a channel is skipped |
+| `DISCORD_PROACTIVE_MIN_POST_INTERVAL_SECONDS` | Per-channel cooldown after the bot sends a proactive reply |
 | `DISCORD_PROACTIVE_DRY_RUN` | Logs proactive replies instead of sending them |
 | `AGENT_COMMAND` | Local agent CLI command, prompt is passed on stdin |
 | `AGENT_WORKDIR` | Working directory for the agent command |

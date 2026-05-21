@@ -13,6 +13,9 @@ def test_ensure_studyos_memory_creates_default_entrypoint(tmp_path: Path) -> Non
     assert "Modern Agentic" in text
     assert "experienced co-developer" in text
     assert "Discord-native thinking partner" in text
+    assert "Proactive Discord Participation" in text
+    assert "Product Discovery And Reuse" in text
+    assert "Delivery Lifecycle" in text
     assert "student-provided\n  repository URL" in text
     assert "Do not assume\n  the main wrapper repository" in text
     assert "lightweight specification sheets" in text
@@ -58,6 +61,10 @@ def test_ensure_global_agents_creates_codex_home_guidance(tmp_path: Path) -> Non
     assert "never force memes" in text
     assert "what was verified" in text
     assert "humans approve and merge" in text
+    assert "Codex Automations" in text
+    assert "$CODEX_HOME/automations/<automation-id>/automation.toml" in text
+    assert "$CODEX_HOME/automation-templates/<template-id>/" in text
+    assert "To pause or activate an automation, change `status`" in text
 
 
 def test_ensure_global_agents_preserves_existing_file(tmp_path: Path) -> None:
@@ -68,6 +75,18 @@ def test_ensure_global_agents_preserves_existing_file(tmp_path: Path) -> None:
 
     assert ensured_path == path
     assert path.read_text(encoding="utf-8") == "custom global guidance\n"
+
+
+def test_ensure_global_agents_refreshes_generated_guidance(tmp_path: Path) -> None:
+    path = tmp_path / "AGENTS.md"
+    path.write_text("# Global Codex Guidance\n\nExisting generated guidance.\n", encoding="utf-8")
+
+    ensure_global_agents(str(tmp_path))
+    text = path.read_text(encoding="utf-8")
+
+    assert "Existing generated guidance." in text
+    assert "Codex Automations" in text
+    assert "$CODEX_HOME/automations/*/automation.toml" in text
 
 
 def test_build_agent_prompt_points_to_memory(tmp_path: Path) -> None:
@@ -96,6 +115,9 @@ def test_ensure_studyos_memory_appends_missing_sections(tmp_path: Path) -> None:
 
     assert ensured_path == path
     assert "Local notes stay here." in text
+    assert "Proactive Discord Participation" in text
+    assert "Product Discovery And Reuse" in text
+    assert "Delivery Lifecycle" in text
     assert "Codex Runtime And Automations" in text
     assert "Python heartbeat" not in text
 
@@ -112,6 +134,7 @@ def test_ensure_studyos_memory_repairs_incomplete_seed(tmp_path: Path) -> None:
     assert text.startswith("# StudyOS Agent Memory")
     assert "Discord-native thinking partner" in text
     assert "attach it in the Discord reply" in text
+    assert "Product Discovery And Reuse" in text
 
 
 def test_default_memory_includes_credential_policy(tmp_path: Path) -> None:
@@ -120,3 +143,5 @@ def test_default_memory_includes_credential_policy(tmp_path: Path) -> None:
 
     assert "local sidecars by" in text
     assert "proceed if they confirm" in text
+    assert "what data appears obtainable" in text
+    assert "ask whether the group\n  wants an issue/spec" in text

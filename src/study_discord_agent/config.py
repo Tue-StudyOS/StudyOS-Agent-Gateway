@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     discord_proactive_agent_enabled: bool = False
     discord_proactive_interval_seconds: int = 900
     discord_proactive_recent_activity_seconds: int = 1800
+    discord_proactive_min_post_interval_seconds: int = 3600
     discord_proactive_dry_run: bool = True
 
     agent_webhook_url: str | None = None

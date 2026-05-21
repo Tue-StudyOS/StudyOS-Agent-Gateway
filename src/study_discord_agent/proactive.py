@@ -17,6 +17,7 @@ class ProactiveMonitor:
         self.settings = settings
         self.agent = agent
         self._last_processed_human_message_ids: dict[int, int] = {}
+        self._last_sent_at_by_channel: dict[int, datetime] = {}
 
     async def run(self) -> None:
         await self.client.wait_until_ready()
@@ -102,16 +103,24 @@ class ProactiveMonitor:
         if self._last_processed_human_message_ids.get(channel_id) == latest_human_message_id:
             logger.info("proactive no-new-human-message channel_id=%s", channel_id)
             return
+        if self._is_in_post_cooldown(channel_id):
+            logger.info("proactive cooldown channel_id=%s", channel_id)
+            return
         self._last_processed_human_message_ids[channel_id] = latest_human_message_id
 
         context = "\n".join(
             f"{message.author}: {message.clean_content}" for message in reversed(messages)
         )
         prompt = (
-            "Review this recent Discord channel history. If a concise proactive reply would "
-            "add useful context, unblock the group, or point out an important risk, answer "
-            "with that one short Discord message. If no response is useful, answer exactly "
-            f"NO_ACTION.\n\nRecent messages:\n{context}"
+            "Review this recent Discord channel history as the StudyOS course coding "
+            "partner. Prefer NO_ACTION unless one concise message would clearly help: "
+            "unblock the group, add concrete technical/product context, identify a "
+            "security/privacy/cost risk, connect the discussion to reusable StudyOS/Tue "
+            "API wrapper capabilities, or suggest a next step. Do not spam, do not send "
+            "multiple follow-ups in a row, and do not create issues or PRs from a "
+            "proactive check; instead ask whether the group wants an issue/spec or "
+            "implementation when the discussion looks ready. If no response is useful, "
+            f"answer exactly NO_ACTION.\n\nRecent messages:\n{context}"
         )
         reply = await self.agent.ask(
             prompt,
@@ -126,11 +135,19 @@ class ProactiveMonitor:
             logger.info("proactive dry-run channel_id=%s message=%s", channel_id, text[:500])
             return
         sent_message = await channel.send(text[:1900])
+        self._last_sent_at_by_channel[channel_id] = datetime.now(UTC)
         logger.info(
             "proactive sent channel_id=%s message_id=%s",
             channel_id,
             getattr(sent_message, "id", None),
         )
+
+    def _is_in_post_cooldown(self, channel_id: int) -> bool:
+        last_sent_at = self._last_sent_at_by_channel.get(channel_id)
+        if last_sent_at is None:
+            return False
+        elapsed = (datetime.now(UTC) - last_sent_at).total_seconds()
+        return elapsed < self.settings.discord_proactive_min_post_interval_seconds
 
     def latest_recent_human_message(self, messages: list[Any]) -> Any | None:
         human_messages = [

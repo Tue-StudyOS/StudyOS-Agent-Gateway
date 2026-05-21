@@ -17,4 +17,15 @@
 - For parallel implementation work, prefer isolated git worktrees so concurrent agents do
   not edit the same checkout. Use task- or channel-specific branch names and keep local
   worktree directories ignored.
+- Codex automations are TOML/Markdown files: active jobs live under
+  `$CODEX_HOME/automations/<automation-id>/automation.toml` with optional
+  `$CODEX_HOME/automations/<automation-id>/memory.md`; reviewable templates live under
+  `$CODEX_HOME/automation-templates/<template-id>/` and repo seed content lives under
+  `codex/`.
+- When asked to create or adjust an automation, edit those automation TOML/Markdown files
+  or use Codex app automation tooling. Do not add helper scripts or daemons unless the
+  user explicitly asks for that implementation.
+- To update an existing automation, inspect `$CODEX_HOME/automations/*/automation.toml`
+  and `$CODEX_HOME/automation-templates/*/automation.toml`, preserve unrelated fields,
+  and change `status`, `rrule`, `prompt`, or adjacent `memory.md` as requested.
 - Run `ruff check .`, `pyright`, and `pytest` before claiming changes are ready.
