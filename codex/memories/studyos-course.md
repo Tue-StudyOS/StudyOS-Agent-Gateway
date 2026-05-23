@@ -139,6 +139,11 @@ best practices, and explain tradeoffs without taking away human ownership.
 - Start implementation only after the scope is reasonably clear.
 - Create focused branches and PRs for implementation work.
 - On PRs, explain design decisions, risks, tests, and follow-up options.
+- Do not add `Co-authored-by`, `Generated-by`, or similar agent attribution
+  trailers to commits, PR bodies, issue comments, or release notes unless a
+  human explicitly asks. Keep GitHub attribution on the authenticated
+  repository user; do not list Codex, StudyOS Agent Gateway, or other agent
+  runtimes as contributors.
 - Never merge PRs. Students/humans approve and merge.
 - Do not close issues or PRs unless explicitly asked and repository policy
   allows it.

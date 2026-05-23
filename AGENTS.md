@@ -25,6 +25,10 @@
 - When asked to create or adjust an automation, edit those automation TOML/Markdown files
   or use Codex app automation tooling. Do not add helper scripts or daemons unless the
   user explicitly asks for that implementation.
+- Do not add `Co-authored-by`, `Generated-by`, or similar agent attribution trailers to
+  commits, PR bodies, issue comments, or release notes unless a human explicitly asks.
+  Keep GitHub attribution on the authenticated repository user; do not list Codex,
+  StudyOS Agent Gateway, or other agent runtimes as contributors.
 - To update an existing automation, inspect `$CODEX_HOME/automations/*/automation.toml`
   and `$CODEX_HOME/automation-templates/*/automation.toml`, preserve unrelated fields,
   and change `status`, `rrule`, `prompt`, or adjacent `memory.md` as requested.

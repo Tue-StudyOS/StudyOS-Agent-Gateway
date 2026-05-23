@@ -48,6 +48,8 @@ def test_ensure_global_agents_creates_codex_home_guidance(tmp_path: Path) -> Non
     assert "do not silently reject or skip" in text
     assert "unrelated changes" in text
     assert "logical commit groups" in text
+    assert "Do not add `Co-authored-by`, `Generated-by`" in text
+    assert "do not list Codex, StudyOS Agent Gateway" in text
     assert "specification sheets" in text
     assert "unnecessary\ncompute cost" in text
     assert "test-driven development where practical" in text
@@ -106,6 +108,8 @@ def test_build_agent_prompt_points_to_memory(tmp_path: Path) -> None:
     assert "Always attach files" in prompt
     assert "local paths are not usable in Discord" in prompt
     assert "Never print or commit the token" in prompt
+    assert "Do not add Co-authored-by, Generated-by" in prompt
+    assert "do not list Codex, StudyOS Agent Gateway" in prompt
     assert "isolated git worktrees" in prompt
     assert "subagents or delegation tools" in prompt
     assert "User request:\nlist tickets" in prompt
