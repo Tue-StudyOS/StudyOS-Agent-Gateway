@@ -1,0 +1,33 @@
+version = 1
+id = "studyos-github-triage"
+kind = "cron"
+name = "StudyOS GitHub triage"
+prompt = """Inspect the StudyOS GitHub repository for new or recently updated issues,
+pull requests, review comments, and discussion that needs follow-up.
+
+Use the authenticated GitHub CLI. Start from the repository mounted at
+`/workspace`; if needed, resolve the remote with `git remote get-url origin`
+or use the configured StudyOS repository.
+
+Goals:
+- Identify new issues that need clarification, acceptance criteria, labels, or
+  duplicate consolidation.
+- Identify pull requests that need reviewer attention, a concise
+  Discord-friendly summary, or a response to review comments.
+- Suggest next implementation steps only when scope is clear.
+- Do not start implementation, create branches, or create PRs from this
+  unattended triage run.
+- Treat implementation as human-gated: a student must explicitly ask the agent
+  to implement an issue in Discord or in a GitHub issue comment.
+- Never merge PRs. Humans approve and merge.
+
+Output:
+- If there is actionable work, summarize the concrete items, issue/PR numbers,
+  and recommended next step.
+- If there is nothing useful to report, say so briefly and do not invent work."""
+status = "PAUSED"
+rrule = "RRULE:FREQ=MINUTELY;INTERVAL=30"
+model = "gpt-5.5"
+reasoning_effort = "high"
+execution_environment = "local"
+cwds = ["/workspace"]

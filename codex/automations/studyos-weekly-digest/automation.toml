@@ -1,0 +1,15 @@
+version = 1
+id = "studyos-weekly-digest"
+kind = "cron"
+name = "StudyOS weekly digest"
+prompt = """Create a weekly StudyOS repository digest from GitHub activity.
+
+Summarize merged PRs, open PRs needing review, issues created or refined, stale
+or duplicate tickets, blockers, and suggested next milestones for the course.
+Keep it constructive and friendly. Never merge PRs."""
+status = "PAUSED"
+rrule = "RRULE:FREQ=WEEKLY;BYDAY=TH;BYHOUR=16;BYMINUTE=0"
+model = "gpt-5.5"
+reasoning_effort = "high"
+execution_environment = "local"
+cwds = ["/workspace"]

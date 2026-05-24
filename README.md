@@ -33,7 +33,7 @@ The Python service receives Discord mentions and optional GitHub webhooks, then 
 - Disabled-by-default proactive channel monitor scaffold for deployments that want opt-in discussion nudges.
 - Optional PR review summaries and issue refinement prompts on GitHub webhook events.
 - Periodic GitHub triage loop for open PRs and issues.
-- Seeded Codex app automation templates for triage, review nudges, issue refinement, implementation candidate discovery, a coordinator heartbeat, and a weekly digest.
+- Seeded Codex app automations for triage, review nudges, issue refinement, implementation candidate discovery, a coordinator heartbeat, and a weekly digest.
 - Docker and Docker Compose setup, including an agent image with `gh`, `git`, SSH, Node/npm, and Codex CLI installed.
 - Shared-agent deployment model for StudyOS course participants.
 
@@ -52,11 +52,11 @@ flowchart TD
     Codex --> GHCLI["authenticated gh CLI"]
     GHCLI --> GitHubRepo["GitHub issues and PRs"]
     Bot --> Channel["Discord GitHub channel"]
-    Templates["Codex automation templates"] --> CodexHome["$CODEX_HOME"]
+    Automations["Codex automations"] --> CodexHome["$CODEX_HOME"]
     Memory["StudyOS memory"] --> CodexHome
 ```
 
-The gateway owns Discord, webhook intake, lightweight polling, prompt assembly, and delivery back to Discord. The agent runtime owns reasoning and repository work in cloned repositories under `/workspaces`. Codex app automations are seeded as paused templates and can be enabled by a deployment that has a real Codex automation runner.
+The gateway owns Discord, webhook intake, lightweight polling, prompt assembly, and delivery back to Discord. The agent runtime owns reasoning and repository work in cloned repositories under `/workspaces`. Codex app automations are seeded into the Codex automation path; their TOML `status` controls whether a deployment with a real Codex automation runner executes them.
 
 ## Quick Start
 
@@ -142,7 +142,12 @@ uploads files under `DISCORD_ARTIFACT_ALLOWED_ROOTS`, with
 `/tmp/studyos-artifacts`, `/workspaces`, and legacy `/workspace` allowed by
 default.
 
-It also seeds paused Codex app automation templates at `$CODEX_HOME/automation-templates/`. Set `STUDYOS_SEED_ACTIVE_AUTOMATIONS=true` only when the target `CODEX_HOME` is managed by a Codex app automation runner and you want the templates copied into `$CODEX_HOME/automations`.
+The agent image also includes static Codex app automations under
+`codex/automations/`. Container startup copies those files into
+`$CODEX_HOME/automations/` without overwriting local edits. A seeded automation
+can be enabled by changing its TOML `status` to `ACTIVE`; automations that
+already ship as `ACTIVE` run when the mounted Codex home is managed by a Codex
+automation runner.
 
 Authenticate the CLIs once inside the running container:
 
@@ -242,13 +247,13 @@ Set `GITHUB_POLL_ENABLED=true` to make the bot check open PRs and issues every `
 - ask refinement questions on blocked work
 - invite reviewers for new PRs
 
-Codex automation templates are seeded separately under `$CODEX_HOME/automation-templates/`:
+Codex automations are seeded under `$CODEX_HOME/automations/`:
 
 - `studyos-github-triage`: inspect issues, PRs, comments, and review activity every 30 minutes.
 - `studyos-pr-review-nudge`: find PRs that need review attention every 2 hours.
 - `studyos-issue-refinement`: find vague or duplicate issues every 6 hours.
 - `studyos-implementation-candidates`: identify ready work daily, but do not implement unattended.
-- `studyos-coordinator-thread`: heartbeat template for a long-lived coordinator thread; replace `REPLACE_WITH_CODEX_THREAD_ID` before enabling.
+- `studyos-coordinator-thread`: heartbeat automation for a long-lived coordinator thread; replace `REPLACE_WITH_CODEX_THREAD_ID` before enabling.
 - `studyos-weekly-digest`: Thursday 16:00 course progress digest.
 
 The image contains tools, not credentials. Do not bake GitHub auth, Codex auth, Claude auth, SSH keys, or Discord tokens into the image.

@@ -41,7 +41,6 @@ class Settings(BaseSettings):
     port: int = 8080
     log_level: str = "info"
     codex_home: str | None = None
-    studyos_seed_active_automations: bool = False
 
     @field_validator(
         "discord_guild_id",

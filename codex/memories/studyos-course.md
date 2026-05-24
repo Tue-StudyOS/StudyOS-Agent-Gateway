@@ -222,9 +222,9 @@ automation prompts self-contained and explicit about human-only merges.
 
 Container/image prefill policy:
 
-- It is fine to ship paused automation templates with this repository or image.
-- Prefer templates over active jobs; a template should be a TOML/Markdown
-  artifact a human can review before enabling.
+- It is fine to ship paused automations with this repository or image.
+- Prefer `PAUSED` status unless the human explicitly wants a job to run as soon
+  as the Codex automation runner sees it.
 - Do not assume `/auth/codex/automations/` is scheduled unless a Codex app
   runner is actually using that `CODEX_HOME`.
 - Docker images should not bake credentials or mutable runtime state. Seed

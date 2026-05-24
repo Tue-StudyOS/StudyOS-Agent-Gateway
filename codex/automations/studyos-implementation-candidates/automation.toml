@@ -1,0 +1,20 @@
+version = 1
+id = "studyos-implementation-candidates"
+kind = "cron"
+name = "StudyOS implementation candidates"
+prompt = """Inspect open StudyOS issues and recent discussion with the authenticated GitHub
+CLI.
+
+Identify issues that look ready for implementation because scope, acceptance
+criteria, and expected behavior are clear. Propose a small PR plan and tests.
+Do not implement from this automation. Implementation requires a separate human
+trigger such as a Discord mention asking the bot to implement an issue or a
+GitHub issue comment that explicitly asks the agent to start. Never merge PRs.
+
+Output ready candidates, why they are ready, and any remaining risks."""
+status = "PAUSED"
+rrule = "RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0"
+model = "gpt-5.5"
+reasoning_effort = "high"
+execution_environment = "local"
+cwds = ["/workspace"]

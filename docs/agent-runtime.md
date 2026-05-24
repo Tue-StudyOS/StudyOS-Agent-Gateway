@@ -124,7 +124,12 @@ runtime exposes subagents or delegation tools, the prompt tells Codex to use
 them for independent subtasks and review; otherwise it should continue in the
 current session and state that subagents are unavailable.
 
-The gateway seeds paused StudyOS automation templates under `$CODEX_HOME/automation-templates/`. This mirrors Codex app automation TOML shape while avoiding accidental unattended runs in plain CLI-only containers. If the deployment uses a Codex app automation runner against the same `CODEX_HOME`, set `STUDYOS_SEED_ACTIVE_AUTOMATIONS=true` to copy the templates into `$CODEX_HOME/automations` without overwriting existing edits.
+The agent image carries static StudyOS automations under `codex/automations/`.
+Container startup copies them into `$CODEX_HOME/automations/` without
+overwriting existing edits. This uses the path Codex app automation runners
+expect. A seeded automation can be enabled by changing its TOML `status` to
+`ACTIVE`; automations that already ship as `ACTIVE` run when the mounted Codex
+home is managed by a Codex automation runner.
 
 Other examples:
 

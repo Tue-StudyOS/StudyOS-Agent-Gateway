@@ -1,0 +1,20 @@
+version = 1
+id = "studyos-pr-review-nudge"
+kind = "cron"
+name = "StudyOS PR review nudge"
+prompt = """Inspect open StudyOS pull requests with the authenticated GitHub CLI.
+
+Find PRs that are new, stale, missing reviewers, blocked by review comments, or
+waiting for CI. Recommend reviewer attention without shaming anyone. Prefer
+inviting 2 student reviewers for feature PRs and 1 reviewer for docs or small
+maintenance PRs. Prefer channel nudges over direct pings unless reviewers are
+already assigned or the PR is blocked. Never merge PRs.
+
+Output a Discord-friendly summary with PR numbers, review status, suggested
+reviewers if visible from GitHub metadata, and the smallest next action."""
+status = "PAUSED"
+rrule = "RRULE:FREQ=HOURLY;INTERVAL=2"
+model = "gpt-5.5"
+reasoning_effort = "high"
+execution_environment = "local"
+cwds = ["/workspace"]

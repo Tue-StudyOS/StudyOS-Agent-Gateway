@@ -1,0 +1,19 @@
+version = 1
+id = "studyos-issue-refinement"
+kind = "cron"
+name = "StudyOS issue refinement"
+prompt = """Inspect open StudyOS issues with the authenticated GitHub CLI.
+
+Find issues that are vague, duplicated, too broad, missing acceptance criteria,
+or blocked on product/UX/API decisions. Ask concise clarifying questions and
+suggest issue consolidation when useful. Do not start implementation from this
+automation.
+
+Output issue numbers and the exact refinement comment or next question that
+would unblock the students."""
+status = "PAUSED"
+rrule = "RRULE:FREQ=HOURLY;INTERVAL=6"
+model = "gpt-5.5"
+reasoning_effort = "high"
+execution_environment = "local"
+cwds = ["/workspace"]

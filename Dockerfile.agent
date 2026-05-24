@@ -36,4 +36,4 @@ RUN pip install --no-cache-dir .
 
 EXPOSE 8080
 
-CMD ["studyos-agent-gateway"]
+CMD ["sh", "-c", "set -eu; if [ -d /app/codex/automations ]; then mkdir -p \"$CODEX_HOME/automations\"; cp -Rn /app/codex/automations/. \"$CODEX_HOME/automations/\"; fi; exec studyos-agent-gateway"]

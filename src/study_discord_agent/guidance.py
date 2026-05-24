@@ -114,10 +114,8 @@ Codex automation state is file-based:
   `$CODEX_HOME/automations/<automation-id>/automation.toml`.
 - Automation run notes or task-specific memory live next to them as
   `$CODEX_HOME/automations/<automation-id>/memory.md`.
-- Reviewable templates live under
-  `$CODEX_HOME/automation-templates/<template-id>/`.
 - Repository-seeded Codex files live under `codex/` in this gateway repo and
-  are copied or seeded into the runtime Codex home.
+  are copied into the runtime Codex home by the agent container startup.
 
 When asked to create or adjust automations, edit those TOML/Markdown files or
 use Codex app automation tooling. Do not create Python helper scripts, daemon
@@ -125,12 +123,11 @@ processes, external schedulers, or runtime hooks unless the user explicitly asks
 for that implementation.
 
 When asked to update an existing automation, inspect
-`$CODEX_HOME/automations/*/automation.toml` and
-`$CODEX_HOME/automation-templates/*/automation.toml` for a matching id, name,
-or prompt. Preserve existing fields unless the user asks to change them. To
-pause or activate an automation, change `status`; to change frequency, update
-`rrule`; to change what it does, edit `prompt` and any adjacent `memory.md`
-that belongs to that automation.
+`$CODEX_HOME/automations/*/automation.toml` for a matching id, name, or prompt.
+Preserve existing fields unless the user asks to change them. To pause or
+activate an automation, change `status`; to change frequency, update `rrule`;
+to change what it does, edit `prompt` and any adjacent `memory.md` that belongs
+to that automation.
 
 To pause or activate an automation, change `status`. To change frequency,
 change `rrule`. To change behavior, edit `prompt` and the adjacent `memory.md`
@@ -138,7 +135,7 @@ when that memory belongs to the same automation.
 
 `automation.toml` should be explicit and reviewable. Include the prompt, status,
 schedule, model/reasoning settings, workspace directories, and execution
-environment where relevant. Prefer paused templates when the user has not
+environment where relevant. Prefer `PAUSED` status when the user has not
 clearly asked to enable a live recurring job.
 
 Keep automation prompts self-contained: describe the task, expected output,
@@ -185,9 +182,9 @@ automation prompts self-contained and explicit about human-only merges.
 
 Container/image prefill policy:
 
-- It is fine to ship paused automation templates with this repository or image.
-- Prefer templates over active jobs; a template should be a TOML/Markdown
-  artifact a human can review before enabling.
+- It is fine to ship paused automations with this repository or image.
+- Prefer `PAUSED` status unless the human explicitly wants a job to run as soon
+  as the Codex automation runner sees it.
 - Do not assume `/auth/codex/automations/` is scheduled unless a Codex app
   runner is actually using that `CODEX_HOME`.
 - Docker images should not bake credentials or mutable runtime state. Seed

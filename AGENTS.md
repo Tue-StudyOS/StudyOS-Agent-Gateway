@@ -17,11 +17,10 @@
 - For parallel implementation work, prefer isolated git worktrees so concurrent agents do
   not edit the same checkout. Use task- or channel-specific branch names and keep local
   worktree directories ignored.
-- Codex automations are TOML/Markdown files: active jobs live under
+- Codex automations are TOML/Markdown files: jobs live under
   `$CODEX_HOME/automations/<automation-id>/automation.toml` with optional
-  `$CODEX_HOME/automations/<automation-id>/memory.md`; reviewable templates live under
-  `$CODEX_HOME/automation-templates/<template-id>/` and repo seed content lives under
-  `codex/`.
+  `$CODEX_HOME/automations/<automation-id>/memory.md`; repo seed content lives
+  under `codex/automations/`.
 - When asked to create or adjust an automation, edit those automation TOML/Markdown files
   or use Codex app automation tooling. Do not add helper scripts or daemons unless the
   user explicitly asks for that implementation.
@@ -29,9 +28,9 @@
   commits, PR bodies, issue comments, or release notes unless a human explicitly asks.
   Keep GitHub attribution on the authenticated repository user; do not list Codex,
   StudyOS Agent Gateway, or other agent runtimes as contributors.
-- To update an existing automation, inspect `$CODEX_HOME/automations/*/automation.toml`
-  and `$CODEX_HOME/automation-templates/*/automation.toml`, preserve unrelated fields,
-  and change `status`, `rrule`, `prompt`, or adjacent `memory.md` as requested.
+- To update an existing automation, inspect `$CODEX_HOME/automations/*/automation.toml`,
+  preserve unrelated fields, and change `status`, `rrule`, `prompt`, or adjacent
+  `memory.md` as requested.
 - Persist important recurring project or course learnings in
   `$CODEX_HOME/memories/studyos-course.md` under a dated "Runtime Learnings" note. For
   target-repository-specific conventions, create gitignored `.learnings/` or `.journal/`

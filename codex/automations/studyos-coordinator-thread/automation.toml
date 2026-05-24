@@ -1,0 +1,18 @@
+version = 1
+id = "studyos-coordinator-thread"
+kind = "heartbeat"
+name = "StudyOS coordinator thread"
+prompt = """Continue the StudyOS coordinator thread. Review recent GitHub and Discord-facing
+project state if available, keep track of blockers, review load, stale issues,
+and implementation candidates. Keep context in this same thread. Never merge
+PRs.
+
+Only report when there is something actionable: blocked PRs, unclear tickets,
+missing reviewers, ready implementation candidates, or a useful course-level
+coordination update. Do not start implementation unless a human explicitly asked
+the agent to implement a specific issue."""
+status = "PAUSED"
+rrule = "FREQ=MINUTELY;INTERVAL=30"
+model = "gpt-5.5"
+reasoning_effort = "high"
+target_thread_id = "REPLACE_WITH_CODEX_THREAD_ID"

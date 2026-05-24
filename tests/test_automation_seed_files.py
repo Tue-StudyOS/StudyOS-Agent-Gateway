@@ -1,0 +1,54 @@
+import tomllib
+from pathlib import Path
+
+SEED_ROOT = Path("codex") / "automations"
+
+
+EXPECTED_TEMPLATE_IDS = {
+    "studyos-coordinator-thread",
+    "studyos-github-triage",
+    "studyos-implementation-candidates",
+    "studyos-issue-refinement",
+    "studyos-pr-review-nudge",
+    "studyos-weekly-digest",
+}
+
+
+def _automation_paths() -> list[Path]:
+    return sorted(SEED_ROOT.glob("*/automation.toml"))
+
+
+def test_static_automations_exist_for_each_seed() -> None:
+    assert {path.parent.name for path in _automation_paths()} == EXPECTED_TEMPLATE_IDS
+
+    for automation_id in EXPECTED_TEMPLATE_IDS:
+        assert (SEED_ROOT / automation_id / "memory.md").exists()
+
+
+def test_static_automations_are_valid_paused_toml() -> None:
+    for path in _automation_paths():
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+
+        assert data["id"] == path.parent.name
+        assert data["status"] == "PAUSED"
+        assert data["kind"] in {"cron", "heartbeat"}
+        assert data["prompt"].strip()
+        assert data["rrule"].strip()
+        if data["kind"] == "heartbeat":
+            assert data["target_thread_id"] == "REPLACE_WITH_CODEX_THREAD_ID"
+        else:
+            assert data["execution_environment"] == "local"
+            assert data["cwds"]
+
+
+def test_automations_encode_human_gate_and_digest_schedule() -> None:
+    triage = tomllib.loads(
+        (SEED_ROOT / "studyos-github-triage" / "automation.toml").read_text(encoding="utf-8")
+    )
+    weekly = tomllib.loads(
+        (SEED_ROOT / "studyos-weekly-digest" / "automation.toml").read_text(encoding="utf-8")
+    )
+
+    assert "Do not start implementation" in triage["prompt"]
+    assert "human-gated" in triage["prompt"]
+    assert weekly["rrule"] == "RRULE:FREQ=WEEKLY;BYDAY=TH;BYHOUR=16;BYMINUTE=0"

@@ -103,7 +103,7 @@ review load, blockers, stale issues, and next milestones.
 ## Heartbeat Thread IDs
 
 Heartbeat automations need a real `target_thread_id` to continue the same Codex
-thread across runs. The template intentionally ships with
+thread across runs. The seeded automation intentionally ships with
 `REPLACE_WITH_CODEX_THREAD_ID` and should stay paused until that value is
 replaced.
 

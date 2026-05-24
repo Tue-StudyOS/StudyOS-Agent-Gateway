@@ -28,7 +28,7 @@ def test_ensure_studyos_memory_creates_default_entrypoint(tmp_path: Path) -> Non
     assert "credential-handling" in text
     assert "Codex Runtime And Automations" in text
     assert "Python heartbeat" not in text
-    assert "automation templates" in text
+    assert "paused automations" in text
 
 
 def test_ensure_global_agents_creates_codex_home_guidance(tmp_path: Path) -> None:
@@ -66,7 +66,6 @@ def test_ensure_global_agents_creates_codex_home_guidance(tmp_path: Path) -> Non
     assert "humans approve and merge" in text
     assert "Codex Automations" in text
     assert "$CODEX_HOME/automations/<automation-id>/automation.toml" in text
-    assert "$CODEX_HOME/automation-templates/<template-id>/" in text
     assert "To pause or activate an automation, change `status`" in text
     assert "$CODEX_HOME/memories/studyos-course.md" in text
     assert "Runtime Learnings" in text
