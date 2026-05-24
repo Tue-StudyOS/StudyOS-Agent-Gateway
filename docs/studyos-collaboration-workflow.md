@@ -97,6 +97,10 @@ the automation itself.
 `target_thread_id` so the same Codex thread retains coordination context. This
 needs a real thread ID before enabling.
 
+`studyos-group-channel-digest`: daily at 17:00. Summarizes meaningful group
+channel activity into the shared updates channel when there is something useful
+for the wider course.
+
 `studyos-weekly-digest`: weekly Thursday at 16:00. Summarizes merged work, open
 review load, blockers, stale issues, and next milestones.
 

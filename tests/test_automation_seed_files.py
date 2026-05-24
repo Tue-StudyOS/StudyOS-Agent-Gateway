@@ -8,6 +8,7 @@ CODEX_CONFIG_PATH = Path("codex") / "config.toml"
 EXPECTED_TEMPLATE_IDS = {
     "studyos-coordinator-thread",
     "studyos-github-triage",
+    "studyos-group-channel-digest",
     "studyos-implementation-candidates",
     "studyos-issue-refinement",
     "studyos-pr-review-nudge",
@@ -51,10 +52,16 @@ def test_automations_encode_human_gate_and_digest_schedule() -> None:
     weekly = tomllib.loads(
         (SEED_ROOT / "studyos-weekly-digest" / "automation.toml").read_text(encoding="utf-8")
     )
+    group_digest = tomllib.loads(
+        (SEED_ROOT / "studyos-group-channel-digest" / "automation.toml").read_text(
+            encoding="utf-8"
+        )
+    )
 
     assert "Do not start implementation" in triage["prompt"]
     assert "human-gated" in triage["prompt"]
     assert weekly["rrule"] == "RRULE:FREQ=WEEKLY;BYDAY=TH;BYHOUR=16;BYMINUTE=0"
+    assert group_digest["config"]["destination_channel_name_candidates"] == ["updates"]
 
 
 def test_codex_config_seed_sets_medium_reasoning() -> None:

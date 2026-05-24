@@ -255,6 +255,7 @@ Codex automations are seeded under `$CODEX_HOME/automations/`:
 - `studyos-issue-refinement`: find vague or duplicate issues every 6 hours.
 - `studyos-implementation-candidates`: identify ready work daily, but do not implement unattended.
 - `studyos-coordinator-thread`: heartbeat automation for a long-lived coordinator thread; replace `REPLACE_WITH_CODEX_THREAD_ID` before enabling.
+- `studyos-group-channel-digest`: summarize meaningful group-channel activity into `#updates` daily.
 - `studyos-weekly-digest`: Thursday 16:00 course progress digest.
 
 The image contains tools, not credentials. Do not bake GitHub auth, Codex auth, Claude auth, SSH keys, or Discord tokens into the image.
