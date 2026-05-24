@@ -38,12 +38,24 @@ Workflow:
   last_scanned_message_ids has a value for that channel.
 - Ignore bot messages unless they contain necessary context for a human request.
 - Summarize only meaningful human discussion.
+- Before proposing a new summary, check whether the channel still has ongoing
+  engagement. Treat a channel as actively engaged when recent non-bot messages
+  inside ongoing_engagement_window_minutes show an unresolved back-and-forth,
+  unanswered question, active planning, or any discussion that would be
+  disrupted by a summary proposal. If there is ongoing engagement, do not post
+  a proposal in that channel during this run.
+- When holding off because of ongoing engagement, schedule exactly one deferred
+  summary-proposal check for that channel at a later time between the hold-off
+  time and the next regular cron fire. Prefer the midpoint, bounded by
+  deferred_proposal_min_delay_minutes after the hold-off time. Record or update
+  that deferred check in deferred_summary_proposals so repeated cron runs do
+  not stack duplicate reminders for the same channel and activity window.
 
 Group proposal workflow:
 - Do not publish new group summaries directly to #updates.
 - For each group channel with meaningful new activity and no unresolved pending
-  proposal, generate a short proposed update summary and post it into that same
-  group channel first.
+  proposal and no ongoing engagement, generate a short proposed update summary
+  and post it into that same group channel first.
 - Ask clearly whether the group would like to share the summary to #updates
   now. Tell members to reply with an explicit approval phrase if they accept,
   or edits/rejection if they do not.
@@ -107,5 +119,8 @@ approval_keywords = [
   "post to updates",
   "yes, share",
 ]
+ongoing_engagement_window_minutes = 90
+deferred_proposal_min_delay_minutes = 60
 last_scanned_message_ids = {}
 pending_update_summaries = {}
+deferred_summary_proposals = {}

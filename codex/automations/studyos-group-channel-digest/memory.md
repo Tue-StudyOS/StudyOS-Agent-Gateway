@@ -11,6 +11,8 @@ Behavior:
 - Post proposals back into the source group channel first.
 - Share to `#updates` only after a non-bot group channel member explicitly
   approves the pending proposal.
+- Do not interrupt ongoing channel engagement with a new proposal; schedule one
+  deferred proposal check between the hold-off time and the next cron fire.
 
 Human policy:
 - Students approve and merge pull requests.
