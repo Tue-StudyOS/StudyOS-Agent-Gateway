@@ -3,8 +3,14 @@
 This automation is intended for Codex app automation runners, not plain CLI
 startup hooks.
 
-Summarize active group-project Discord channels into the shared StudyOS updates
-channel when there is meaningful new activity.
+Run a daily human-in-the-loop summary review for StudyOS Discord channels named
+`group-*`.
+
+Behavior:
+- Generate proposed summaries from `group-*` channels only.
+- Post proposals back into the source group channel first.
+- Share to `#updates` only after a non-bot group channel member explicitly
+  approves the pending proposal.
 
 Human policy:
 - Students approve and merge pull requests.

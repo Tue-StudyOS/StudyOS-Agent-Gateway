@@ -3,41 +3,56 @@ id = "studyos-group-channel-digest"
 kind = "cron"
 name = "StudyOS group channel digest"
 prompt = """
-Summarize active StudyOS Discord group channels into one concise shared channel
-digest. Do not require humans to configure channel IDs.
+Run a daily human-in-the-loop StudyOS Discord group summary review.
 
-Configuration lives in this automation TOML under [config]. Discover channels
-from Discord on every run by listing accessible guilds and channels, then infer
-which channels are group project channels from names, categories, and the
-patterns below. Channel IDs may be stored only as runtime state in
-last_processed_message_ids after a successful digest.
+Configuration lives in this automation TOML under [config]. Use the configured
+StudyOS guild_id as the only Discord server. Discover channels inside that
+guild on every run, but only treat text channels whose normalized channel names
+match group_channel_name_globs as source channels. Do not infer group channels
+from categories, vague names, or broad project/team keywords.
 
 Workflow:
 - Read this TOML from $CODEX_HOME/automations/studyos-group-channel-digest/automation.toml.
 - Require DISCORD_TOKEN. Never print or store the token.
 - Call the Discord REST API directly:
-  - GET /users/@me/guilds to list accessible guilds.
-  - GET /guilds/{guild_id}/channels for each accessible guild.
-- Prefer guilds whose names match guild_name_hints. If no hint matches, inspect
-  all accessible guilds and continue only when the StudyOS course/server can be
-  identified confidently from guild, category, or channel names.
-- Build a channel inventory with guild name, category name, channel name, type,
-  and ID. Consider only text channels that the bot can read.
-- Identify source group channels by matching group_channel_name_patterns against
-  channel names or category names, then remove channels matching
-  excluded_channel_name_patterns.
-- Identify the destination channel by exact or normalized name match against
-  destination_channel_name_candidates. The intended destination is the StudyOS
-  #updates channel. If no single destination is found, do not post; report the
-  likely candidate channels in the automation output.
+  - GET /users/@me/guilds to confirm the bot can access guild_id.
+  - GET /guilds/{guild_id}/channels to list StudyOS channels.
+- Build a channel inventory with category name, channel name, type, and ID.
+  Consider only text channels that the bot can read and send messages in.
+- Identify source group channels only by matching channel names against
+  group_channel_name_globs. For now this must mean channels named group-*.
+- Identify the destination channel as destination_channel_id when present, or
+  by exact normalized name match against destination_channel_name_candidates.
+  The intended destination is the StudyOS #updates channel. If no single
+  destination is found, do not post; report likely candidate channels in the
+  automation output.
+- First check each group channel for replies to pending proposals recorded in
+  pending_update_summaries. If a non-bot channel member explicitly approves
+  sharing with wording like "approve", "approved", "share", "ship it",
+  "post to updates", or "yes, share", post the approved summary to #updates.
+  If members reject or ask for edits, do not post to #updates; leave the
+  proposal pending unless the group clearly rejects it.
 - For each discovered source channel, fetch messages with
   GET /channels/{channel_id}/messages?limit=100 when no last message ID exists,
   or GET /channels/{channel_id}/messages?after={last_message_id}&limit=100 when
-  last_processed_message_ids has a value for that channel.
+  last_scanned_message_ids has a value for that channel.
 - Ignore bot messages unless they contain necessary context for a human request.
 - Summarize only meaningful human discussion.
 
-Digest shape:
+Group proposal workflow:
+- Do not publish new group summaries directly to #updates.
+- For each group channel with meaningful new activity and no unresolved pending
+  proposal, generate a short proposed update summary and post it into that same
+  group channel first.
+- Ask clearly whether the group would like to share the summary to #updates
+  now. Tell members to reply with an explicit approval phrase if they accept,
+  or edits/rejection if they do not.
+- Record the posted proposal in pending_update_summaries with source channel
+  ID, proposal message ID, newest fetched message ID, proposed summary text,
+  and status. After posting a proposal, update last_scanned_message_ids for
+  that source channel so the same activity is not proposed again.
+
+Summary shape:
 - Group by source channel name.
 - Include decisions or emerging project direction.
 - Include blockers or open questions.
@@ -48,14 +63,19 @@ Safety and noise rules:
 - Do not include secrets, credentials, private personal data, or long quotes.
 - Do not mention individual students unless the source discussion clearly needs
   a named owner or reviewer.
-- If there is no meaningful new group activity, do not post a digest.
+- If there is no meaningful new group activity and no approval/rejection on
+  pending proposals, do not post.
+- Do not send more than one new proposal per group channel per run.
 - Never create issues, branches, pull requests, or merge pull requests.
 
-Post one concise digest only after exactly one destination channel and at least
-one source group channel are discovered. After a successful post, update
-last_processed_message_ids in this TOML to the newest fetched message ID per
-source channel. Preserve all other fields. If posting fails, report the failure
-in the automation output and do not advance last_processed_message_ids.
+Posting to #updates:
+- Post to #updates only after a group channel member explicitly approves a
+  pending proposal in that group channel.
+- When posting to #updates, include the source channel name and the approved
+  summary. Keep it concise.
+- After a successful #updates post, mark the pending proposal as shared and
+  preserve all other fields. If posting fails, report the failure in the
+  automation output and leave the proposal pending.
 """
 status = "PAUSED"
 rrule = "RRULE:FREQ=DAILY;BYHOUR=17;BYMINUTE=0"
@@ -65,15 +85,12 @@ execution_environment = "local"
 cwds = ["/workspaces"]
 
 [config]
-guild_name_hints = ["StudyOS", "ML-4510", "Practical Machine Learning"]
+guild_id = "1501971751247024228"
+destination_channel_id = "1501974151165116637"
 destination_channel_name_candidates = [
   "updates",
 ]
-group_channel_name_patterns = [
-  "group",
-  "team",
-  "project",
-]
+group_channel_name_globs = ["group-*"]
 excluded_channel_name_patterns = [
   "admin",
   "bot",
@@ -82,4 +99,13 @@ excluded_channel_name_patterns = [
   "announcement",
   "digest",
 ]
-last_processed_message_ids = {}
+approval_keywords = [
+  "approve",
+  "approved",
+  "share",
+  "ship it",
+  "post to updates",
+  "yes, share",
+]
+last_scanned_message_ids = {}
+pending_update_summaries = {}

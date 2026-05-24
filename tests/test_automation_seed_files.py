@@ -61,7 +61,11 @@ def test_automations_encode_human_gate_and_digest_schedule() -> None:
     assert "Do not start implementation" in triage["prompt"]
     assert "human-gated" in triage["prompt"]
     assert weekly["rrule"] == "RRULE:FREQ=WEEKLY;BYDAY=TH;BYHOUR=16;BYMINUTE=0"
+    assert group_digest["rrule"] == "RRULE:FREQ=DAILY;BYHOUR=17;BYMINUTE=0"
+    assert group_digest["config"]["guild_id"] == "1501971751247024228"
     assert group_digest["config"]["destination_channel_name_candidates"] == ["updates"]
+    assert group_digest["config"]["group_channel_name_globs"] == ["group-*"]
+    assert "Post to #updates only after" in group_digest["prompt"]
 
 
 def test_codex_config_seed_sets_medium_reasoning() -> None:
