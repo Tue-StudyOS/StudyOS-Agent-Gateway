@@ -103,6 +103,10 @@ def test_build_agent_prompt_points_to_memory(tmp_path: Path) -> None:
     assert str(tmp_path / "memories" / "studyos-course.md") in prompt
     assert "Discord source message id: 456" in prompt
     assert "studyos-discord-context --channel-id <channel_id>" in prompt
+    assert "GitHub auth routing" in prompt
+    assert "GH_PUBLIC_CONFIG_DIR=/auth/gh-public" in prompt
+    assert "classic token with only `public_repo`" in prompt
+    assert "fork the upstream repository" in prompt
     assert "studyos-usage-report --limit 20" in prompt
     assert "studyos-usage-plot --limit 20" in prompt
     assert "/tmp/studyos-artifacts/discord-channel-usage.png" in prompt

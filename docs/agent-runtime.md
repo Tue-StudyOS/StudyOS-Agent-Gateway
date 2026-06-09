@@ -203,9 +203,17 @@ Use runtime injection instead:
 
 - `DISCORD_TOKEN` as an environment variable or secret
 - GitHub CLI auth in the `gh-auth` Docker volume, or `GITHUB_TOKEN` as a fallback
+- External-public GitHub CLI auth in the `gh-public-auth` Docker volume when
+  the agent needs to fork and open PRs against public repositories outside the
+  default fine-grained token's repository selection
 - `CODEX_HOME` in the `codex-auth` Docker volume, or mounted from a host auth directory
 - Claude Code auth mounted or configured according to its deployment mode
 - SSH deploy keys mounted read-only if the agent needs Git over SSH
+
+The gateway sets `GH_CONFIG_DIR=/auth/gh` for normal scoped repository work and
+`GH_PUBLIC_CONFIG_DIR=/auth/gh-public` for public open-source contribution
+flows. Agents should switch profiles per command instead of copying tokens or
+embedding credentials in remotes.
 
 ## Interactive Container Login
 

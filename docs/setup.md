@@ -39,6 +39,30 @@ docker compose up --build -d
 
 Expose port `8080` through a reverse proxy or tunnel for GitHub webhooks.
 
+For the course Jetson, use the source-sync deployment script instead of
+baking credentials into an image layer:
+
+```bash
+IMAGE_TAG=studyos-agent-gateway:jetson-$(date -u +%Y%m%d%H%M%S) \
+  scripts/deploy_jetson.sh
+```
+
+The script syncs the repository to a remote build directory, builds
+`Dockerfile.agent` on the Jetson with host networking, and recreates the
+`studyos-agent-gateway` container. It preserves runtime state in named Docker
+volumes for `/auth/codex`, `/auth/gh`, `/auth/gh-public`, `/workspaces`,
+`/tmp/studyos-artifacts`, and `/tmp/studyos-discord-attachments`.
+
+Seed the external-public GitHub CLI profile only through stdin:
+
+```bash
+scripts/seed_jetson_public_gh.sh < /path/to/public-repo-token.txt
+```
+
+That profile is mounted at `/auth/gh-public` and should only be used for public
+open-source contribution flows where the default fine-grained profile cannot
+push to a fork.
+
 ## Agent Runtime On The Server
 
 The recommended StudyOS setup is:
