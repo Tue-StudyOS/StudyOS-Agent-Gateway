@@ -24,13 +24,13 @@ async def run() -> None:
     queue: asyncio.Queue[DiscordNotification] = asyncio.Queue()
     github = GitHubClient(settings.github_token_value)
     agent = AgentGateway(
-        settings.agent_webhook_url,
-        settings.agent_command,
-        settings.agent_workdir,
-        settings.agent_timeout_seconds,
-        settings.agent_channel_sessions_enabled,
-        settings.agent_session_store_path,
-        settings.codex_home,
+        webhook_url=settings.agent_webhook_url,
+        command=settings.agent_command,
+        workdir=settings.agent_workdir,
+        timeout_seconds=settings.agent_timeout_seconds,
+        channel_sessions_enabled=settings.agent_channel_sessions_enabled,
+        session_store_path=settings.agent_session_store_path,
+        codex_home=settings.codex_home,
     )
     bot = StudyBot(settings, github, agent, queue)
     app = create_app(settings, queue)

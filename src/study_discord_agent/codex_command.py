@@ -5,14 +5,36 @@ from typing import cast
 
 
 @dataclass(frozen=True)
+class AgentUsage:
+    input_tokens: int = 0
+    cached_input_tokens: int = 0
+    output_tokens: int = 0
+    reasoning_output_tokens: int = 0
+
+    @property
+    def total_tokens(self) -> int:
+        return self.input_tokens + self.output_tokens
+
+    def add(self, other: "AgentUsage") -> "AgentUsage":
+        return AgentUsage(
+            input_tokens=self.input_tokens + other.input_tokens,
+            cached_input_tokens=self.cached_input_tokens + other.cached_input_tokens,
+            output_tokens=self.output_tokens + other.output_tokens,
+            reasoning_output_tokens=self.reasoning_output_tokens + other.reasoning_output_tokens,
+        )
+
+
+@dataclass(frozen=True)
 class AgentCommandResult:
     message: str
     session_id: str | None
+    usage: AgentUsage = AgentUsage()
 
 
 def extract_agent_result(output: str) -> AgentCommandResult:
     messages: list[str] = []
     session_id: str | None = None
+    usage = AgentUsage()
     for line in output.splitlines():
         try:
             parsed: object = json.loads(line)
@@ -21,6 +43,10 @@ def extract_agent_result(output: str) -> AgentCommandResult:
         if not isinstance(parsed, dict):
             continue
         event = cast(dict[str, object], parsed)
+        if event.get("type") == "thread.started":
+            value = event.get("thread_id")
+            if isinstance(value, str) and value:
+                session_id = value
         if event.get("type") == "session_meta":
             payload_obj = event.get("payload")
             if isinstance(payload_obj, dict):
@@ -28,6 +54,9 @@ def extract_agent_result(output: str) -> AgentCommandResult:
                 value = payload.get("id")
                 if isinstance(value, str) and value:
                     session_id = value
+        usage_obj = event.get("usage")
+        if isinstance(usage_obj, dict):
+            usage = usage.add(_agent_usage_from_event(cast(dict[str, object], usage_obj)))
         item_obj = event.get("item")
         if not isinstance(item_obj, dict):
             continue
@@ -37,8 +66,21 @@ def extract_agent_result(output: str) -> AgentCommandResult:
             messages.append(text)
 
     if messages:
-        return AgentCommandResult(message=messages[-1].strip(), session_id=session_id)
-    return AgentCommandResult(message=output, session_id=session_id)
+        return AgentCommandResult(message=messages[-1].strip(), session_id=session_id, usage=usage)
+    return AgentCommandResult(message=output, session_id=session_id, usage=usage)
+
+
+def _agent_usage_from_event(usage: dict[str, object]) -> AgentUsage:
+    return AgentUsage(
+        input_tokens=_int_usage_value(usage.get("input_tokens")),
+        cached_input_tokens=_int_usage_value(usage.get("cached_input_tokens")),
+        output_tokens=_int_usage_value(usage.get("output_tokens")),
+        reasoning_output_tokens=_int_usage_value(usage.get("reasoning_output_tokens")),
+    )
+
+
+def _int_usage_value(value: object) -> int:
+    return value if isinstance(value, int) and value > 0 else 0
 
 
 def is_codex_exec_command(args: list[str]) -> bool:

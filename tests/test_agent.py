@@ -9,6 +9,7 @@ from study_discord_agent.agent import (
     build_codex_resume_args,
     extract_agent_result,
 )
+from study_discord_agent.usage_store import ChannelUsageStore, default_usage_store_path
 
 
 @pytest.mark.asyncio
@@ -56,6 +57,39 @@ def test_extract_agent_result_reads_session_id() -> None:
 
     assert result.session_id == "session-123"
     assert result.message == "done"
+
+
+def test_extract_agent_result_reads_thread_started_id() -> None:
+    output = "\n".join(
+        [
+            '{"type":"thread.started","thread_id":"019eacf7-09ab-7f71-9d6c-a5e61d9d4d3e"}',
+            '{"type":"item.completed","item":{"type":"agent_message","text":"done"}}',
+        ]
+    )
+
+    result = extract_agent_result(output)
+
+    assert result.session_id == "019eacf7-09ab-7f71-9d6c-a5e61d9d4d3e"
+    assert result.message == "done"
+
+
+def test_extract_agent_result_reads_turn_usage() -> None:
+    output = "\n".join(
+        [
+            '{"type":"thread.started","thread_id":"session-123"}',
+            '{"type":"item.completed","item":{"type":"agent_message","text":"done"}}',
+            '{"type":"turn.completed","usage":{"input_tokens":100,'
+            '"cached_input_tokens":20,"output_tokens":7,"reasoning_output_tokens":3}}',
+        ]
+    )
+
+    result = extract_agent_result(output)
+
+    assert result.usage.input_tokens == 100
+    assert result.usage.cached_input_tokens == 20
+    assert result.usage.output_tokens == 7
+    assert result.usage.reasoning_output_tokens == 3
+    assert result.usage.total_tokens == 107
 
 
 def test_build_codex_resume_args_keeps_supported_options() -> None:
@@ -170,3 +204,77 @@ async def test_codex_channel_session_resumes_after_first_turn(tmp_path: Path) ->
     assert first.message == "started"
     assert first.session_id == "stored-session"
     assert second.message == "resumed:stored-session"
+
+
+@pytest.mark.asyncio
+async def test_codex_usage_is_recorded_by_channel(tmp_path: Path) -> None:
+    fake_codex = tmp_path / "codex"
+    fake_codex.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env python3",
+                "import json",
+                "print(json.dumps({'type': 'thread.started', 'thread_id': 'session-123'}))",
+                "print(json.dumps({'item': {'type': 'agent_message', 'text': 'done'}}))",
+                "print(json.dumps({'type': 'turn.completed', 'usage': {",
+                "    'input_tokens': 100,",
+                "    'cached_input_tokens': 25,",
+                "    'output_tokens': 7,",
+                "    'reasoning_output_tokens': 2,",
+                "}}))",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    fake_codex.chmod(0o755)
+    usage_path = tmp_path / "usage.json"
+    agent = AgentGateway(
+        webhook_url=None,
+        command=f"{fake_codex} exec --json -",
+        workdir=None,
+        timeout_seconds=10,
+        usage_store_path=str(usage_path),
+    )
+
+    reply = await agent.ask("hello", user="student", channel_id=123, source_message_id=1)
+
+    rows = ChannelUsageStore(usage_path).rows()
+    assert reply.message == "done"
+    assert len(rows) == 1
+    assert rows[0].channel_id == 123
+    assert rows[0].turns == 1
+    assert rows[0].input_tokens == 100
+    assert rows[0].cached_input_tokens == 25
+    assert rows[0].output_tokens == 7
+    assert rows[0].reasoning_output_tokens == 2
+    assert rows[0].last_session_id == "session-123"
+
+
+@pytest.mark.asyncio
+async def test_positional_codex_home_controls_default_usage_store(tmp_path: Path) -> None:
+    fake_codex = tmp_path / "codex"
+    fake_codex.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env python3",
+                "import json",
+                "print(json.dumps({'type': 'thread.started', 'thread_id': 'session-456'}))",
+                "print(json.dumps({'item': {'type': 'agent_message', 'text': 'done'}}))",
+                "print(json.dumps({'type': 'turn.completed', 'usage': {",
+                "    'input_tokens': 12,",
+                "    'output_tokens': 3,",
+                "}}))",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    fake_codex.chmod(0o755)
+    codex_home = tmp_path / "codex-home"
+    agent = AgentGateway(None, f"{fake_codex} exec --json -", None, 10, True, None, str(codex_home))
+
+    await agent.ask("hello", user="student", channel_id=456, source_message_id=1)
+
+    rows = ChannelUsageStore(default_usage_store_path(str(codex_home))).rows()
+    assert len(rows) == 1
+    assert rows[0].channel_id == 456
+    assert rows[0].total_tokens == 15

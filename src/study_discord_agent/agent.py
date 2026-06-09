@@ -19,6 +19,7 @@ from study_discord_agent.codex_command import (
 )
 from study_discord_agent.prompt_context import build_agent_prompt
 from study_discord_agent.session_store import ChannelSessionStore, default_session_store_path
+from study_discord_agent.usage_store import ChannelUsageStore, default_usage_store_path
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,7 @@ class AgentGateway:
         channel_sessions_enabled: bool = True,
         session_store_path: str | None = None,
         codex_home: str | None = None,
+        usage_store_path: str | None = None,
     ) -> None:
         self._webhook_url = webhook_url
         self._command = command
@@ -49,6 +51,8 @@ class AgentGateway:
         self._channel_locks: dict[int, asyncio.Lock] = {}
         store_path = session_store_path or str(default_session_store_path(codex_home))
         self._session_store = ChannelSessionStore(store_path)
+        usage_path = usage_store_path or str(default_usage_store_path(codex_home))
+        self._usage_store = ChannelUsageStore(usage_path)
 
     async def ask(
         self,
@@ -152,6 +156,7 @@ class AgentGateway:
 
         run_args = add_codex_image_args(args, image_paths) if is_codex_exec_command(args) else args
         result = await self._run_command(run_args, full_prompt)
+        self._record_usage(channel_id, result)
         return self._agent_reply_from_result(result)
 
     async def _ask_codex_channel_session(
@@ -170,6 +175,7 @@ class AgentGateway:
         result = await self._run_command(run_args, full_prompt)
         if result.session_id:
             self._session_store.set(channel_id, result.session_id)
+        self._record_usage(channel_id, result)
         return self._agent_reply_from_result(result)
 
     async def _run_command(self, args: list[str], full_prompt: str) -> AgentCommandResult:
@@ -218,6 +224,9 @@ class AgentGateway:
             session_id=result.session_id,
             files=parsed.files,
         )
+
+    def _record_usage(self, channel_id: int, result: AgentCommandResult) -> None:
+        self._usage_store.add(channel_id, result.usage, result.session_id)
 
 def _is_image_path(path: Path) -> bool:
     return path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".gif"}

@@ -8,3 +8,6 @@ __pycache__/
 dist/
 *.egg-info/
 .DS_Store
+.learnings/
+.journal/
+.secrets/
