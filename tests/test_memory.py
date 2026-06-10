@@ -104,6 +104,9 @@ def test_build_agent_prompt_points_to_memory(tmp_path: Path) -> None:
     assert "Discord source message id: 456" in prompt
     assert "studyos-discord-context --channel-id <channel_id>" in prompt
     assert "GitHub auth routing" in prompt
+    assert "GH_STUDYOS_ORG_CONFIG_DIR=/auth/gh-studyos-org" in prompt
+    assert "Tue-StudyOS" in prompt
+    assert "full name starts with `Tue-StudyOS/`" in prompt
     assert "GH_PUBLIC_CONFIG_DIR=/auth/gh-public" in prompt
     assert "classic token with only `public_repo`" in prompt
     assert "fork the upstream repository" in prompt

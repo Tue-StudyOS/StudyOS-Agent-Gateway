@@ -39,6 +39,7 @@ test -f "$REMOTE_RUNTIME_DIR/.env"
 docker volume create studyos-agent-gateway_codex-auth >/dev/null
 docker volume create studyos-agent-gateway_gh-auth >/dev/null
 docker volume create studyos-agent-gateway_gh-public-auth >/dev/null
+docker volume create studyos-agent-gateway_gh-studyos-org-auth >/dev/null
 docker volume create studyos-agent-gateway_agent-workspaces >/dev/null
 docker volume create studyos-agent-gateway_artifacts >/dev/null
 docker volume create studyos-agent-gateway_discord-attachments >/dev/null
@@ -73,9 +74,11 @@ docker run -d \
   -e CODEX_HOME=/auth/codex \
   -e GH_CONFIG_DIR=/auth/gh \
   -e GH_PUBLIC_CONFIG_DIR=/auth/gh-public \
+  -e GH_STUDYOS_ORG_CONFIG_DIR=/auth/gh-studyos-org \
   -v studyos-agent-gateway_codex-auth:/auth/codex \
   -v studyos-agent-gateway_gh-auth:/auth/gh \
   -v studyos-agent-gateway_gh-public-auth:/auth/gh-public \
+  -v studyos-agent-gateway_gh-studyos-org-auth:/auth/gh-studyos-org \
   -v studyos-agent-gateway_agent-workspaces:/workspaces \
   -v studyos-agent-gateway_artifacts:/tmp/studyos-artifacts \
   -v studyos-agent-gateway_discord-attachments:/tmp/studyos-discord-attachments \

@@ -50,18 +50,21 @@ IMAGE_TAG=studyos-agent-gateway:jetson-$(date -u +%Y%m%d%H%M%S) \
 The script syncs the repository to a remote build directory, builds
 `Dockerfile.agent` on the Jetson with host networking, and recreates the
 `studyos-agent-gateway` container. It preserves runtime state in named Docker
-volumes for `/auth/codex`, `/auth/gh`, `/auth/gh-public`, `/workspaces`,
-`/tmp/studyos-artifacts`, and `/tmp/studyos-discord-attachments`.
+volumes for `/auth/codex`, `/auth/gh`, `/auth/gh-public`,
+`/auth/gh-studyos-org`, `/workspaces`, `/tmp/studyos-artifacts`, and
+`/tmp/studyos-discord-attachments`.
 
-Seed the external-public GitHub CLI profile only through stdin:
+Seed additional GitHub CLI profiles only through stdin:
 
 ```bash
+scripts/seed_jetson_studyos_org_gh.sh < /path/to/tue-studyos-token.txt
 scripts/seed_jetson_public_gh.sh < /path/to/public-repo-token.txt
 ```
 
-That profile is mounted at `/auth/gh-public` and should only be used for public
-open-source contribution flows where the default fine-grained profile cannot
-push to a fork.
+The StudyOS organization profile is mounted at `/auth/gh-studyos-org` and is
+for repositories under `Tue-StudyOS/*`. The public profile is mounted at
+`/auth/gh-public` and should only be used for public open-source contribution
+flows where the fine-grained profiles cannot push to a fork.
 
 ## Agent Runtime On The Server
 

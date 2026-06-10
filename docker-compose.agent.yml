@@ -8,9 +8,13 @@ services:
     environment:
       CODEX_HOME: /auth/codex
       GH_CONFIG_DIR: /auth/gh
+      GH_PUBLIC_CONFIG_DIR: /auth/gh-public
+      GH_STUDYOS_ORG_CONFIG_DIR: /auth/gh-studyos-org
     volumes:
       - codex-auth:/auth/codex
       - gh-auth:/auth/gh
+      - gh-public-auth:/auth/gh-public
+      - gh-studyos-org-auth:/auth/gh-studyos-org
       - agent-workspaces:/workspaces
     ports:
       - "8080:8080"
@@ -19,4 +23,6 @@ services:
 volumes:
   codex-auth:
   gh-auth:
+  gh-public-auth:
+  gh-studyos-org-auth:
   agent-workspaces:

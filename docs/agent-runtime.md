@@ -203,6 +203,8 @@ Use runtime injection instead:
 
 - `DISCORD_TOKEN` as an environment variable or secret
 - GitHub CLI auth in the `gh-auth` Docker volume, or `GITHUB_TOKEN` as a fallback
+- StudyOS organization GitHub CLI auth in the `gh-studyos-org-auth` Docker
+  volume for repositories under `Tue-StudyOS/*`
 - External-public GitHub CLI auth in the `gh-public-auth` Docker volume when
   the agent needs to fork and open PRs against public repositories outside the
   default fine-grained token's repository selection
@@ -211,9 +213,10 @@ Use runtime injection instead:
 - SSH deploy keys mounted read-only if the agent needs Git over SSH
 
 The gateway sets `GH_CONFIG_DIR=/auth/gh` for normal scoped repository work and
-`GH_PUBLIC_CONFIG_DIR=/auth/gh-public` for public open-source contribution
-flows. Agents should switch profiles per command instead of copying tokens or
-embedding credentials in remotes.
+`GH_STUDYOS_ORG_CONFIG_DIR=/auth/gh-studyos-org` for `Tue-StudyOS/*`
+repositories. It also sets `GH_PUBLIC_CONFIG_DIR=/auth/gh-public` for public
+open-source contribution flows. Agents should switch profiles per command
+instead of copying tokens or embedding credentials in remotes.
 
 ## Interactive Container Login
 
