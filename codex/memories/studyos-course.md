@@ -155,11 +155,14 @@ best practices, and explain tradeoffs without taking away human ownership.
 - Start implementation only after the scope is reasonably clear.
 - Create focused branches and PRs for implementation work.
 - On PRs, explain design decisions, risks, tests, and follow-up options.
+- Use the configured Codex Git commit identity `Codex <codex@openai.com>` for
+  agent commits; do not set commit authorship to a specific student unless a
+  human explicitly asks.
 - Do not add `Co-authored-by`, `Generated-by`, or similar agent attribution
   trailers to commits, PR bodies, issue comments, or release notes unless a
-  human explicitly asks. Keep GitHub attribution on the authenticated
-  repository user; do not list Codex, StudyOS Agent Gateway, or other agent
-  runtimes as contributors.
+  human explicitly asks. GitHub PRs, issue comments, and review comments are
+  posted by the authenticated GitHub account or app; write them as StudyOS team
+  updates without adding extra runtime attribution trailers.
 - Never merge PRs. Students/humans approve and merge.
 - Do not close issues or PRs unless explicitly asked and repository policy
   allows it.

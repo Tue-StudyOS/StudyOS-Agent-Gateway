@@ -131,6 +131,19 @@ Codex runtime exposes subagents or delegation tools, the prompt tells Codex to
 use them for independent subtasks and review; otherwise it should continue in
 the current session and state that subagents are unavailable.
 
+## Git Identity
+
+Gateway startup configures the agent runtime's global Git author as:
+
+```text
+Codex <codex@openai.com>
+```
+
+That identity controls commit author/committer metadata for repositories that
+do not override Git identity locally. GitHub pull requests, issue comments, and
+review comments are still authored by the authenticated GitHub account or app
+selected through `GH_CONFIG_DIR`; Git config cannot change that actor.
+
 The agent image carries static StudyOS automations under `codex/automations/`.
 Container startup copies them into `$CODEX_HOME/automations/` without
 overwriting existing edits. This uses the path Codex app automation runners

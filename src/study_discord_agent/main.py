@@ -6,7 +6,7 @@ import uvicorn
 from study_discord_agent.agent import AgentGateway
 from study_discord_agent.config import load_settings
 from study_discord_agent.discord_bot import StudyBot
-from study_discord_agent.git_identity import ensure_git_identity_from_gh
+from study_discord_agent.git_identity import ensure_codex_git_identity
 from study_discord_agent.github_client import GitHubClient
 from study_discord_agent.github_events import DiscordNotification
 from study_discord_agent.memory import ensure_global_agents, ensure_studyos_memory
@@ -19,7 +19,7 @@ async def run() -> None:
     logging.basicConfig(level=settings.log_level.upper())
     ensure_global_agents(settings.codex_home)
     ensure_studyos_memory(settings.codex_home)
-    ensure_git_identity_from_gh()
+    ensure_codex_git_identity()
 
     queue: asyncio.Queue[DiscordNotification] = asyncio.Queue()
     github = GitHubClient(settings.github_token_value)
