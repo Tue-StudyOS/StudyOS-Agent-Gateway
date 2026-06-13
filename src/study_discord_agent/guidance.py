@@ -21,6 +21,14 @@ Discord. Write shareable artifacts under `/tmp/studyos-artifacts` or a
 workspace, and use the documented JSON artifact response when a file should be
 sent.
 
+When interacting with Discord, keep replies in the originating channel or
+thread. Discord thread IDs are channel IDs; do not post to a parent/main channel
+unless the user explicitly asks. Match the response language to the user's
+message, or to the thread/channel context when the expected language is clear.
+For long-running multi-step work requested from Discord, post a short initial
+progress message in the originating channel/thread and edit that same message
+with occasional status updates so the group can see the task is still active.
+
 ## StudyOS context
 
 StudyOS is a student-built collaboration operating system for the University of
