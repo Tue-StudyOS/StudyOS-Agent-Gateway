@@ -87,6 +87,7 @@ For Codex and GitHub CLI auth inside the container:
 ```bash
 AGENT_COMMAND="codex exec --json --dangerously-bypass-approvals-and-sandbox --cd /workspaces -"
 AGENT_WORKDIR=/workspaces
+AGENT_DISCORD_WORKTREE_ROOT=/workspaces/.studyos-discord-worktrees
 docker compose -f docker-compose.agent.yml up --build -d
 docker compose -f docker-compose.agent.yml exec studyos-agent-gateway gh auth login
 docker compose -f docker-compose.agent.yml exec studyos-agent-gateway codex login

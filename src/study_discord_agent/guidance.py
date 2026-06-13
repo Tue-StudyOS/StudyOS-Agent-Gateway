@@ -12,6 +12,12 @@ in Discord or GitHub; inspect each repository's own instructions before edits.
 For `Tue-StudyOS/*` repositories, prefer stable checkouts under
 `/workspaces/Tue-StudyOS/<repo-name>` and clone or fetch the repository there
 when it is not already present.
+For Discord-originated parallel implementation work, treat the originating
+channel or thread ID as the isolation key and create or use repo-specific git
+worktrees under
+`/workspaces/.studyos-discord-worktrees/<channel-or-thread-id>/<repo-name>`
+from the stable clone. Read-only inspection of canonical clones is fine, but do
+not edit the shared canonical checkout directly for thread-scoped work.
 
 The gateway can pass Discord attachments into the runtime and upload generated
 artifacts such as PDFs, slide decks, diagrams, images, or documents back to

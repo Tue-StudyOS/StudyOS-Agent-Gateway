@@ -1,2 +1,11 @@
 model = "gpt-5.5"
 model_reasoning_effort = "medium"
+
+[projects."/workspaces"]
+trust_level = "trusted"
+
+[projects."/tmp"]
+trust_level = "trusted"
+
+[projects."/workspaces/.studyos-discord-worktrees"]
+trust_level = "trusted"

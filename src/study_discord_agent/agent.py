@@ -16,7 +16,9 @@ from study_discord_agent.codex_command import (
     build_codex_resume_args,
     extract_agent_result,
     is_codex_exec_command,
+    with_codex_cd_args,
 )
+from study_discord_agent.discord_worktrees import DiscordWorkspace, DiscordWorktreeManager
 from study_discord_agent.prompt_context import build_agent_prompt
 from study_discord_agent.session_store import ChannelSessionStore, default_session_store_path
 from study_discord_agent.usage_store import ChannelUsageStore, default_usage_store_path
@@ -42,6 +44,8 @@ class AgentGateway:
         session_store_path: str | None = None,
         codex_home: str | None = None,
         usage_store_path: str | None = None,
+        discord_worktree_root: str | None = None,
+        studyos_org_root: str = "/workspaces/Tue-StudyOS",
     ) -> None:
         self._webhook_url = webhook_url
         self._command = command
@@ -53,6 +57,11 @@ class AgentGateway:
         self._session_store = ChannelSessionStore(store_path)
         usage_path = usage_store_path or str(default_usage_store_path(codex_home))
         self._usage_store = ChannelUsageStore(usage_path)
+        self._discord_worktrees = (
+            DiscordWorktreeManager(discord_worktree_root, studyos_org_root)
+            if discord_worktree_root
+            else None
+        )
 
     async def ask(
         self,
@@ -135,6 +144,14 @@ class AgentGateway:
             raise RuntimeError("AGENT_COMMAND is not configured")
 
         args = shlex.split(self._command)
+        workspace = await self._prepare_discord_workspace(
+            args,
+            prompt,
+            channel_id,
+            source_message_id,
+        )
+        if workspace:
+            args = with_codex_cd_args(args, workspace.path)
         full_prompt = build_agent_prompt(
             prompt,
             user,
@@ -142,6 +159,7 @@ class AgentGateway:
             os.environ.get("CODEX_HOME"),
             source_message_id,
             tuple(str(path) for path in attachment_paths),
+            str(workspace.path) if workspace else None,
         )
         image_paths = tuple(path for path in attachment_paths if _is_image_path(path))
         if self._uses_channel_sessions(args, channel_id, source_message_id):
@@ -223,6 +241,29 @@ class AgentGateway:
             and is_codex_exec_command(args)
         )
 
+    async def _prepare_discord_workspace(
+        self,
+        args: list[str],
+        prompt: str,
+        channel_id: int | None,
+        source_message_id: int | None,
+    ) -> DiscordWorkspace | None:
+        if (
+            self._discord_worktrees is None
+            or channel_id is None
+            or source_message_id is None
+            or not is_codex_exec_command(args)
+        ):
+            return None
+        workspace = await self._discord_worktrees.prepare(prompt, channel_id)
+        logger.info(
+            "prepared Discord workspace channel_id=%s path=%s repo=%s",
+            channel_id,
+            workspace.path,
+            workspace.repo_name,
+        )
+        return workspace
+
     def _agent_reply_from_result(self, result: AgentCommandResult) -> AgentReply:
         parsed = parse_agent_reply(result.message)
         if not parsed.message and not parsed.files:
@@ -235,6 +276,7 @@ class AgentGateway:
 
     def _record_usage(self, channel_id: int, result: AgentCommandResult) -> None:
         self._usage_store.add(channel_id, result.usage, result.session_id)
+
 
 def _is_image_path(path: Path) -> bool:
     return path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".gif"}

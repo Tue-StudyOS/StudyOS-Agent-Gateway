@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     agent_auto_review_enabled: bool = False
     agent_channel_sessions_enabled: bool = True
     agent_session_store_path: str | None = None
+    agent_discord_worktree_root: str | None = "/workspaces/.studyos-discord-worktrees"
 
     github_poll_enabled: bool = False
     github_poll_interval_seconds: int = 1800
@@ -45,6 +46,7 @@ class Settings(BaseSettings):
     @field_validator(
         "discord_guild_id",
         "discord_pr_channel_id",
+        "agent_discord_worktree_root",
         mode="before",
     )
     @classmethod

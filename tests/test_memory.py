@@ -19,6 +19,7 @@ def test_ensure_studyos_memory_creates_default_entrypoint(tmp_path: Path) -> Non
     assert "Delivery Lifecycle" in text
     assert "student-provided\n  repository URL" in text
     assert "/workspaces/Tue-StudyOS/<repo-name>" in text
+    assert "/workspaces/.studyos-discord-worktrees/<channel-or-thread-id>" in text
     assert "Do not assume\n  the main wrapper repository" in text
     assert "lightweight specification sheets" in text
     assert "compute and maintenance costs" in text
@@ -58,6 +59,7 @@ def test_ensure_global_agents_creates_codex_home_guidance(tmp_path: Path) -> Non
     assert "specification sheets" in text
     assert "unnecessary\ncompute cost" in text
     assert "test-driven development where practical" in text
+    assert "/workspaces/.studyos-discord-worktrees/<channel-or-thread-id>" in text
     assert "acceptance criteria" in text
     assert "not a hard mechanical limit" in text
     assert "coherent\nnaming and formatting patterns" in text
@@ -132,8 +134,26 @@ def test_build_agent_prompt_points_to_memory(tmp_path: Path) -> None:
     assert "Do not add Co-authored-by, Generated-by" in prompt
     assert "do not list Codex, StudyOS Agent Gateway" in prompt
     assert "isolated git worktrees" in prompt
+    assert "/workspaces/.studyos-discord-worktrees/<channel-or-thread-id>" in prompt
+    assert "originating Discord channel/thread id above" in prompt
     assert "subagents or delegation tools" in prompt
     assert "User request:\nlist tickets" in prompt
+
+
+def test_build_agent_prompt_includes_runtime_workspace(tmp_path: Path) -> None:
+    runtime_workspace = tmp_path / "discord-worktrees" / "123" / "example"
+    prompt = build_agent_prompt(
+        "implement issue",
+        "student",
+        123,
+        str(tmp_path),
+        456,
+        (),
+        str(runtime_workspace),
+    )
+
+    assert f"Runtime workspace for this Discord request:\n{runtime_workspace}" in prompt
+    assert "Start implementation from this workspace" in prompt
 
 
 def test_build_agent_prompt_allows_non_discord_source(tmp_path: Path) -> None:

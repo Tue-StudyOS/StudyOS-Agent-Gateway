@@ -17,6 +17,13 @@
 - For parallel implementation work, prefer isolated git worktrees so concurrent agents do
   not edit the same checkout. Use task- or channel-specific branch names and keep local
   worktree directories ignored.
+- Runtime workspace layout: keep canonical StudyOS org clones under
+  `/workspaces/Tue-StudyOS/<repo-name>`. For Discord-originated parallel work,
+  use the originating channel or thread ID as the isolation key and create or
+  use repo-specific git worktrees under
+  `/workspaces/.studyos-discord-worktrees/<channel-or-thread-id>/<repo-name>`.
+  Read-only inspection of canonical clones is fine, but do not edit the shared
+  canonical checkout directly for thread-scoped implementation work.
 - Codex automations are TOML/Markdown files: jobs live under
   `$CODEX_HOME/automations/<automation-id>/automation.toml` with optional
   `$CODEX_HOME/automations/<automation-id>/memory.md`; repo seed content lives

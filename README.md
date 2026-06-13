@@ -120,11 +120,20 @@ same channel resume the same Codex session. Different channels can run in
 parallel; mentions in the same channel are serialized to avoid racing one Codex
 conversation.
 
-The prompt also tells Codex to use isolated git worktrees for complex parallel
-implementation work when appropriate. That keeps separate group channels or
-subtasks from editing the same checkout at once. If a runtime exposes subagents
-or delegation tools, Codex is instructed to use them for independent subtasks;
-otherwise it should continue locally and say that subagents are unavailable.
+For Discord-originated Codex sessions, `AGENT_DISCORD_WORKTREE_ROOT` gives each
+originating channel or thread a persistent working root such as
+`/workspaces/.studyos-discord-worktrees/<channel-id>`. When a request mentions
+exactly one `Tue-StudyOS/<repo-name>` repository, the gateway clones or reuses
+the canonical checkout under `/workspaces/Tue-StudyOS/<repo-name>`, creates or
+reuses a detached git worktree under that channel/thread root, and starts the
+initial Codex session there. If the target repository is not yet clear, Codex
+starts in the channel/thread root and is prompted to create repo-specific
+worktrees there before editing repository files.
+
+This keeps separate group channels, Discord threads, and subtasks from editing
+the same checkout at once. If a runtime exposes subagents or delegation tools,
+Codex is instructed to use them for independent subtasks; otherwise it should
+continue locally and say that subagents are unavailable.
 
 Discord attachments on a mention are downloaded into `DISCORD_ATTACHMENT_DIR`.
 Image attachments are passed to Codex CLI through `-i` in addition to being
@@ -184,6 +193,7 @@ docker compose -f docker-compose.agent.yml exec studyos-agent-gateway codex logi
 | `AGENT_AUTO_REVIEW_ENABLED` | Runs the agent on useful GitHub webhook events |
 | `AGENT_CHANNEL_SESSIONS_ENABLED` | Resume one Codex session per Discord channel when `AGENT_COMMAND` is `codex exec` |
 | `AGENT_SESSION_STORE_PATH` | Optional override for the Discord channel to Codex session JSON store |
+| `AGENT_DISCORD_WORKTREE_ROOT` | Per Discord channel/thread root for parallel Codex worktrees |
 | `AGENT_WEBHOOK_URL` | Optional external agent endpoint instead of local CLI |
 
 See [`.env.example`](./.env.example) for all supported options.

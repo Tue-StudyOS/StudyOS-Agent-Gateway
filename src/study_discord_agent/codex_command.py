@@ -99,6 +99,37 @@ def add_codex_image_args(args: list[str], image_paths: tuple[Path, ...]) -> list
     return [*args[:prompt_index], *image_args, *args[prompt_index:]]
 
 
+def with_codex_cd_args(args: list[str], workdir: Path) -> list[str]:
+    if not is_codex_exec_command(args):
+        return args
+
+    cd = str(workdir)
+    rewritten: list[str] = []
+    replaced = False
+    index = 0
+    while index < len(args):
+        value = args[index]
+        if value in {"-C", "--cd"}:
+            rewritten.extend([value, cd])
+            index += 2 if index + 1 < len(args) else 1
+            replaced = True
+            continue
+        if value.startswith("--cd="):
+            rewritten.append(f"--cd={cd}")
+            index += 1
+            replaced = True
+            continue
+        rewritten.append(value)
+        index += 1
+
+    if replaced:
+        return rewritten
+    if "-" not in rewritten:
+        return [*rewritten, "--cd", cd]
+    prompt_index = rewritten.index("-")
+    return [*rewritten[:prompt_index], "--cd", cd, *rewritten[prompt_index:]]
+
+
 def build_codex_resume_args(
     args: list[str],
     session_id: str | None,

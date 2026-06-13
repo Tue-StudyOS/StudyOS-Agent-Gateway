@@ -8,6 +8,7 @@ from study_discord_agent.agent import (
     add_codex_image_args,
     build_codex_resume_args,
     extract_agent_result,
+    with_codex_cd_args,
 )
 from study_discord_agent.usage_store import ChannelUsageStore, default_usage_store_path
 
@@ -148,6 +149,34 @@ def test_codex_resume_args_include_image_inputs() -> None:
     ]
 
 
+def test_codex_cd_args_replace_existing_workspace() -> None:
+    args = ["codex", "exec", "--json", "--cd", "/workspace", "-"]
+    worktree = Path("/workspaces/.studyos-discord-worktrees/123/example")
+
+    assert with_codex_cd_args(args, worktree) == [
+        "codex",
+        "exec",
+        "--json",
+        "--cd",
+        str(worktree),
+        "-",
+    ]
+
+
+def test_codex_cd_args_are_inserted_before_prompt() -> None:
+    args = ["codex", "exec", "--json", "-"]
+    worktree = Path("/workspaces/.studyos-discord-worktrees/123/example")
+
+    assert with_codex_cd_args(args, worktree) == [
+        "codex",
+        "exec",
+        "--json",
+        "--cd",
+        str(worktree),
+        "-",
+    ]
+
+
 @pytest.mark.asyncio
 async def test_agent_command_extracts_artifact_reply(tmp_path: Path) -> None:
     artifact = tmp_path / "diagram.png"
@@ -167,6 +196,40 @@ async def test_agent_command_extracts_artifact_reply(tmp_path: Path) -> None:
 
     assert reply.message == "done"
     assert reply.files == (artifact,)
+
+
+@pytest.mark.asyncio
+async def test_codex_channel_session_uses_discord_worktree_root(tmp_path: Path) -> None:
+    fake_codex = tmp_path / "codex"
+    fake_codex.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env python3",
+                "import json",
+                "import sys",
+                "print(json.dumps({'type': 'session_meta', 'payload': {'id': 's'}}))",
+                "text = ' '.join(sys.argv)",
+                "print(json.dumps({'item': {'type': 'agent_message', 'text': text}}))",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    fake_codex.chmod(0o755)
+    root = tmp_path / "discord-worktrees"
+    agent = AgentGateway(
+        webhook_url=None,
+        command=f"{fake_codex} exec --json --cd /workspace -",
+        workdir=None,
+        timeout_seconds=10,
+        session_store_path=str(tmp_path / "sessions.json"),
+        discord_worktree_root=str(root),
+        studyos_org_root=str(tmp_path / "Tue-StudyOS"),
+    )
+
+    reply = await agent.ask("hello", user="student", channel_id=123, source_message_id=1)
+
+    assert f"--cd {root / '123'}" in reply.message
+    assert (root / "123").is_dir()
 
 
 @pytest.mark.asyncio

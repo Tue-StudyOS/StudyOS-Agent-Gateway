@@ -8,9 +8,11 @@ def build_agent_prompt(
     codex_home: str | None,
     source_message_id: int | None = None,
     attachment_paths: tuple[str, ...] = (),
+    runtime_workspace_path: str | None = None,
 ) -> str:
     memory_path = get_studyos_memory_path(codex_home)
     attachment_block = _build_attachment_block(attachment_paths)
+    workspace_block = _build_runtime_workspace_block(runtime_workspace_path)
     return (
         "You are running from the StudyOS Discord/GitHub collaboration gateway.\n"
         f"Before substantial StudyOS work, consult the project memory at {memory_path} "
@@ -83,9 +85,17 @@ def build_agent_prompt(
         "isolated git worktrees or runtime-provided worktree support so separate agents or "
         "sessions do not edit the same checkout concurrently. Prefer a branch name tied to "
         "the task or Discord channel, verify the worktree directory is ignored, and keep "
-        "changes grouped into logical commits. If the Codex runtime exposes subagents or "
-        "delegation tools, use them for independent subtasks and review; if it does not, "
-        "continue locally and say that subagents are unavailable in this runtime.\n\n"
+        "changes grouped into logical commits. Use canonical StudyOS org clones under "
+        "`/workspaces/Tue-StudyOS/<repo-name>` and, for Discord-originated implementation "
+        "work, use repo-specific git worktrees under "
+        "`/workspaces/.studyos-discord-worktrees/<channel-or-thread-id>/<repo-name>` "
+        "using the originating Discord channel/thread id above as the isolation key. "
+        "Read-only inspection of canonical clones is fine, but do not edit the shared "
+        "canonical checkout directly for thread-scoped implementation work. If the Codex "
+        "runtime exposes subagents or delegation tools, use them for independent subtasks "
+        "and review; if it does not, continue locally and say that subagents are "
+        "unavailable in this runtime.\n"
+        f"{workspace_block}\n"
         f"{attachment_block}"
         "Discord file artifacts: when the user asks for a diagram, image, document, "
         "PDF, slide deck, spreadsheet, archive, or any other generated file, write it "
@@ -97,6 +107,18 @@ def build_agent_prompt(
         "Use normal text when you have no files to send.\n\n"
         "User request:\n"
         f"{prompt}\n"
+    )
+
+
+def _build_runtime_workspace_block(runtime_workspace_path: str | None) -> str:
+    if not runtime_workspace_path:
+        return ""
+    return (
+        "Runtime workspace for this Discord request:\n"
+        f"{runtime_workspace_path}\n"
+        "Start implementation from this workspace. If it is only the channel/thread "
+        "root, create repo-specific git worktrees below it before editing repository "
+        "files."
     )
 
 

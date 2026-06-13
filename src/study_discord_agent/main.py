@@ -31,6 +31,7 @@ async def run() -> None:
         channel_sessions_enabled=settings.agent_channel_sessions_enabled,
         session_store_path=settings.agent_session_store_path,
         codex_home=settings.codex_home,
+        discord_worktree_root=settings.agent_discord_worktree_root,
     )
     bot = StudyBot(settings, github, agent, queue)
     app = create_app(settings, queue)

@@ -115,15 +115,21 @@ not resume the same Codex session at the same time. Different channels can run
 in parallel. GitHub poller and webhook-triggered runs do not use Discord channel
 sessions.
 
-Channel sessions still share the configured `AGENT_WORKDIR` by default. For
-implementation tasks that should run in parallel across groups or subtasks,
-Codex is prompted to clone/fetch target repositories into `/workspaces` and
-create or use isolated git worktrees before editing files.
-Prefer task- or channel-specific branch names, verify project-local worktree
-directories are ignored, and keep commits grouped logically. If the active Codex
-runtime exposes subagents or delegation tools, the prompt tells Codex to use
-them for independent subtasks and review; otherwise it should continue in the
-current session and state that subagents are unavailable.
+For Discord-originated Codex sessions, `AGENT_DISCORD_WORKTREE_ROOT` gives each
+originating channel or thread a persistent working root such as
+`/workspaces/.studyos-discord-worktrees/<channel-id>`. When a request mentions
+exactly one `Tue-StudyOS/<repo-name>` repository, the gateway clones or reuses
+the canonical checkout under `/workspaces/Tue-StudyOS/<repo-name>`, creates or
+reuses a detached git worktree under that channel/thread root, rewrites Codex
+`--cd` to the worktree, and starts the initial Codex session there.
+
+If the target repository is not yet clear, Codex starts in the channel/thread
+root and is prompted to create repo-specific worktrees there before editing
+repository files. Prefer task- or channel-specific branch names, verify worktree
+directories are ignored, and keep commits grouped logically. If the active
+Codex runtime exposes subagents or delegation tools, the prompt tells Codex to
+use them for independent subtasks and review; otherwise it should continue in
+the current session and state that subagents are unavailable.
 
 The agent image carries static StudyOS automations under `codex/automations/`.
 Container startup copies them into `$CODEX_HOME/automations/` without
