@@ -6,7 +6,7 @@
 2. Add a bot user and copy the bot token into `DISCORD_TOKEN`.
 3. Enable the message content intent.
 4. Invite the bot with the `bot` scope.
-4. Copy the target PR channel ID into `DISCORD_PR_CHANNEL_ID` if you want GitHub notifications or poller summaries.
+4. Copy the target PR channel ID into `DISCORD_PR_CHANNEL_ID` if you want GitHub notification mirrors or poller summaries in Discord.
 5. Optionally copy the server ID into `DISCORD_GUILD_ID` so old slash commands can be cleared quickly.
 
 StudyOS interaction is mention-first. Participants tag the bot in Discord when they want to brainstorm, ask for research, refine an issue, or start a scoped task.
@@ -111,7 +111,10 @@ AGENT_COMMAND="claude -p --permission-mode acceptEdits"
 AGENT_WORKDIR=/workspaces
 ```
 
-Use `AGENT_AUTO_REVIEW_ENABLED=true` only after mention-based agent usage works reliably.
+Use `AGENT_AUTO_REVIEW_ENABLED=true` only after mention-based agent usage works
+reliably. Webhook-triggered agent runs do not require `DISCORD_PR_CHANNEL_ID`;
+set that channel only when webhook notifications or poller summaries should be
+mirrored into Discord.
 
 ## Periodic GitHub Triage
 

@@ -18,6 +18,7 @@ def test_ensure_studyos_memory_creates_default_entrypoint(tmp_path: Path) -> Non
     assert "Persistent Learnings" in text
     assert "Delivery Lifecycle" in text
     assert "student-provided\n  repository URL" in text
+    assert "/workspaces/Tue-StudyOS/<repo-name>" in text
     assert "Do not assume\n  the main wrapper repository" in text
     assert "lightweight specification sheets" in text
     assert "compute and maintenance costs" in text
@@ -42,6 +43,7 @@ def test_ensure_global_agents_creates_codex_home_guidance(tmp_path: Path) -> Non
     assert "belongs to the agent runtime" in text
     assert "image is a harness" in text
     assert "/workspaces" in text
+    assert "/workspaces/Tue-StudyOS/<repo-name>" in text
     assert "share URLs\nin Discord or GitHub" in text
     assert "$CODEX_HOME/memories/studyos-course.md" in text
     assert "do not route student credentials" in text
@@ -107,6 +109,8 @@ def test_build_agent_prompt_points_to_memory(tmp_path: Path) -> None:
     assert "GH_STUDYOS_ORG_CONFIG_DIR=/auth/gh-studyos-org" in prompt
     assert "Tue-StudyOS" in prompt
     assert "full name starts with `Tue-StudyOS/`" in prompt
+    assert "/workspaces/Tue-StudyOS/<repo-name>" in prompt
+    assert "clone or fetch missing" in prompt
     assert "GH_PUBLIC_CONFIG_DIR=/auth/gh-public" in prompt
     assert "classic token with only `public_repo`" in prompt
     assert "fork the upstream repository" in prompt
@@ -123,6 +127,14 @@ def test_build_agent_prompt_points_to_memory(tmp_path: Path) -> None:
     assert "isolated git worktrees" in prompt
     assert "subagents or delegation tools" in prompt
     assert "User request:\nlist tickets" in prompt
+
+
+def test_build_agent_prompt_allows_non_discord_source(tmp_path: Path) -> None:
+    prompt = build_agent_prompt("review issue", "github-webhook", None, str(tmp_path))
+
+    assert "Discord user: github-webhook" in prompt
+    assert "Discord channel id: none" in prompt
+    assert "Discord source message id: unknown" in prompt
 
 
 def test_ensure_studyos_memory_appends_missing_sections(tmp_path: Path) -> None:

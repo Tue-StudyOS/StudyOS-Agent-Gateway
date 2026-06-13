@@ -129,6 +129,9 @@ best practices, and explain tradeoffs without taking away human ownership.
 - A task may target an already-cloned repository or a student-provided
   repository URL. If a repository URL is provided, clone or fetch it into an
   isolated workspace and follow that repository's own instructions.
+- For `Tue-StudyOS/*` repositories, prefer stable local checkouts under
+  `/workspaces/Tue-StudyOS/<repo-name>` and clone or fetch the repository there
+  when it is not already present.
 - Treat issues as lightweight specification sheets for implementation PRs.
   Capture scope, acceptance criteria, risks, security constraints, data/API
   contracts, expected UX, and test expectations when relevant.

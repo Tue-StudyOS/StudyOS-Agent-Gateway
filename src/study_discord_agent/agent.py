@@ -58,7 +58,7 @@ class AgentGateway:
         self,
         prompt: str,
         user: str,
-        channel_id: int,
+        channel_id: int | None,
         source_message_id: int | None = None,
         attachment_paths: tuple[Path, ...] = (),
     ) -> AgentReply:
@@ -96,7 +96,7 @@ class AgentGateway:
         self,
         prompt: str,
         user: str,
-        channel_id: int,
+        channel_id: int | None,
         source_message_id: int | None,
         attachment_paths: tuple[Path, ...],
     ) -> AgentReply:
@@ -127,7 +127,7 @@ class AgentGateway:
         self,
         prompt: str,
         user: str,
-        channel_id: int,
+        channel_id: int | None,
         source_message_id: int | None,
         attachment_paths: tuple[Path, ...],
     ) -> AgentReply:
@@ -144,7 +144,8 @@ class AgentGateway:
             tuple(str(path) for path in attachment_paths),
         )
         image_paths = tuple(path for path in attachment_paths if _is_image_path(path))
-        if self._uses_channel_sessions(args, source_message_id):
+        if self._uses_channel_sessions(args, channel_id, source_message_id):
+            assert channel_id is not None
             lock = self._channel_locks.setdefault(channel_id, asyncio.Lock())
             async with lock:
                 return await self._ask_codex_channel_session(
@@ -156,7 +157,8 @@ class AgentGateway:
 
         run_args = add_codex_image_args(args, image_paths) if is_codex_exec_command(args) else args
         result = await self._run_command(run_args, full_prompt)
-        self._record_usage(channel_id, result)
+        if channel_id is not None:
+            self._record_usage(channel_id, result)
         return self._agent_reply_from_result(result)
 
     async def _ask_codex_channel_session(
@@ -208,9 +210,15 @@ class AgentGateway:
             raise RuntimeError("Agent command produced no output")
         return result
 
-    def _uses_channel_sessions(self, args: list[str], source_message_id: int | None) -> bool:
+    def _uses_channel_sessions(
+        self,
+        args: list[str],
+        channel_id: int | None,
+        source_message_id: int | None,
+    ) -> bool:
         return (
             self._channel_sessions_enabled
+            and channel_id is not None
             and source_message_id is not None
             and is_codex_exec_command(args)
         )

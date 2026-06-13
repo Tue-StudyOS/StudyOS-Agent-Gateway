@@ -7,8 +7,10 @@ from typing import cast
 LOCAL_FILE_LINK_RE = re.compile(r"\[([^\]]+)\]\(((?:/workspace|/workspaces|/tmp)[^)]+)\)")
 LOCAL_FILE_PATH_RE = re.compile(
     r"(?<![\w/])((?:/workspace|/workspaces|/tmp)/[^\s)>,]+"
-    r"\.(?:pdf|png|jpe?g|webp|gif|svg|txt|md|csv|json|zip|docx|pptx|xlsx|tex))"
+    r"\.(?:pdf|png|jpe?g|webp|gif|svg|txt|md|csv|json|zip|docx|pptx|xlsx|tex)"
+    r"(?!:\d))"
 )
+LOCAL_SOURCE_LOCATION_SUFFIX_RE = re.compile(r":\d+(?::\d+)?$")
 
 
 @dataclass(frozen=True)
@@ -43,6 +45,8 @@ def parse_text_artifacts(text: str) -> ParsedAgentReply:
     def replace_link(match: re.Match[str]) -> str:
         label = match.group(1).strip()
         path = match.group(2).strip()
+        if LOCAL_SOURCE_LOCATION_SUFFIX_RE.search(path):
+            return match.group(0)
         files.append(Path(path))
         return f"{label} (attached)"
 

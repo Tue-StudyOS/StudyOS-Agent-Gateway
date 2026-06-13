@@ -162,6 +162,10 @@ Expected response:
 ## Automatic GitHub Follow-Up
 
 Set `AGENT_AUTO_REVIEW_ENABLED=true` to run the agent for useful GitHub webhook events.
+`DISCORD_PR_CHANNEL_ID` is optional for this path; without it, the webhook only
+invokes the agent and the agent should use GitHub as the primary response
+surface. With a channel configured, the gateway also mirrors webhook
+notifications and agent summaries into Discord.
 
 The generated prompts ask for PR review summaries, issue refinement questions, duplicate detection, and next steps. They explicitly tell the agent not to merge pull requests. GitHub write access should still be controlled by:
 

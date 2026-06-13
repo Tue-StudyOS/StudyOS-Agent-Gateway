@@ -51,9 +51,11 @@ def _pull_request_notification(payload: dict[str, Any]) -> DiscordNotification |
         )
         agent_prompt = (
             f"Review pull request #{number} in {repo_name}: {url}\n"
-            "Post a concise Discord summary that lowers the threshold for student review: "
-            "summarize the intent, likely risk areas, useful review angles, and concrete next "
-            "steps. Never merge the PR. Merging is reserved for StudyOS students through GitHub."
+            "Inspect the PR and decide the smallest useful next action. If a response is useful, "
+            "prefer GitHub-native surfaces such as a PR comment or review comment. Use Discord "
+            "only when course coordination clearly benefits from involving the group chat. "
+            "Summarize intent, likely risk areas, useful review angles, and concrete next steps. "
+            "Never merge the PR. Merging is reserved for StudyOS students through GitHub."
         )
 
     return DiscordNotification(
@@ -137,6 +139,8 @@ def _issue_refinement_prompt(
         f"Latest participant: @{author}\n"
         "Help the issue author shape this into actionable work. Ask clarifying questions, "
         "identify likely duplicates, suggest scope boundaries, and propose acceptance criteria. "
+        "Prefer replying on the GitHub issue when a response is useful. Use Discord only when "
+        "course coordination clearly benefits from involving the group chat. "
         "Only move toward implementation when the intended behavior and constraints are clear. "
         "If implementation is ready and the runtime has repository access, create a branch and PR. "
         "Never merge PRs; StudyOS students merge through GitHub."

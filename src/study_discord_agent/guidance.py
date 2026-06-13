@@ -9,6 +9,9 @@ volume wiring, and instructions. Repositories live in persistent workspaces,
 usually under `/workspaces`, and are cloned or fetched on demand. StudyOS
 groups may bring their own GitHub repositories and share URLs
 in Discord or GitHub; inspect each repository's own instructions before edits.
+For `Tue-StudyOS/*` repositories, prefer stable checkouts under
+`/workspaces/Tue-StudyOS/<repo-name>` and clone or fetch the repository there
+when it is not already present.
 
 The gateway can pass Discord attachments into the runtime and upload generated
 artifacts such as PDFs, slide decks, diagrams, images, or documents back to

@@ -4,7 +4,7 @@ from study_discord_agent.memory import get_studyos_memory_path
 def build_agent_prompt(
     prompt: str,
     user: str,
-    channel_id: int,
+    channel_id: int | None,
     codex_home: str | None,
     source_message_id: int | None = None,
     attachment_paths: tuple[str, ...] = (),
@@ -30,7 +30,9 @@ def build_agent_prompt(
         "uses a fine-grained token owned by `Tue-StudyOS` with access to all "
         "repositories under that organization; use it for repos whose full name "
         "starts with `Tue-StudyOS/`, including branches, issues, and PRs when a "
-        "human asks for those operations. Prefix those commands with "
+        "human asks for those operations. Prefer stable local checkouts under "
+        "`/workspaces/Tue-StudyOS/<repo-name>` and clone or fetch missing "
+        "repositories there before inspecting files. Prefix those commands with "
         "`GH_CONFIG_DIR=${GH_STUDYOS_ORG_CONFIG_DIR:-/auth/gh-studyos-org}`. A public "
         "profile at `GH_PUBLIC_CONFIG_DIR=/auth/gh-public` uses a classic token with "
         "only `public_repo`; use it only for external public open-source contribution "
@@ -43,7 +45,7 @@ def build_agent_prompt(
         "that profile is selected. Never print tokens, persist tokens in remote URLs, "
         "or use one profile's token for another profile's repository class.\n"
         f"Discord user: {user}\n"
-        f"Discord channel id: {channel_id}\n"
+        f"Discord channel id: {channel_id if channel_id is not None else 'none'}\n"
         f"Discord source message id: {source_message_id or 'unknown'}\n"
         "Discord context tool: if the request depends on earlier Discord discussion, "
         "or wording like 'this', 'that', 'the repo', or 'what did we discuss' makes the "

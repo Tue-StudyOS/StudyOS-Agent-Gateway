@@ -41,9 +41,9 @@ the PR is blocked, or the group agrees to a reviewer rotation.
 
 ## Discord Channel Routing
 
-Current implementation has one configured outbound GitHub channel:
-`DISCORD_PR_CHANNEL_ID`. GitHub webhook notifications, poller summaries, and
-agent triage summaries post there.
+GitHub webhooks can run the agent without an outbound Discord channel. If
+`DISCORD_PR_CHANNEL_ID` is configured, GitHub webhook notifications, poller
+summaries, and agent triage summaries are mirrored there.
 
 Future channel routing could split:
 
@@ -52,7 +52,7 @@ Future channel routing could split:
 - `#release`: weekly digest, milestones, deploy readiness.
 
 Until channel routing exists, keep automation output short and post only
-actionable items to the configured GitHub channel.
+actionable Discord items to the configured GitHub channel.
 
 ## Webhooks Vs Automations
 

@@ -163,7 +163,7 @@ docker compose -f docker-compose.agent.yml exec studyos-agent-gateway codex logi
 | --- | --- |
 | `DISCORD_TOKEN` | Discord bot token |
 | `DISCORD_GUILD_ID` | Optional guild ID used to clear old commands faster |
-| `DISCORD_PR_CHANNEL_ID` | Discord channel ID for GitHub notifications and poller summaries |
+| `DISCORD_PR_CHANNEL_ID` | Optional Discord channel ID for GitHub notification mirrors and poller summaries |
 | `GITHUB_WEBHOOK_SECRET` | Secret configured on the GitHub webhook |
 | `GITHUB_TOKEN` | Optional fallback token; `gh auth login` is the preferred agent-server path |
 | `GITHUB_REPOSITORY` | Default repository in `owner/name` form |
@@ -181,7 +181,7 @@ docker compose -f docker-compose.agent.yml exec studyos-agent-gateway codex logi
 | `AGENT_COMMAND` | Local agent CLI command, prompt is passed on stdin |
 | `AGENT_WORKDIR` | Working directory for the agent command |
 | `AGENT_TIMEOUT_SECONDS` | Max runtime for one agent invocation |
-| `AGENT_AUTO_REVIEW_ENABLED` | Runs the agent on PR webhook events |
+| `AGENT_AUTO_REVIEW_ENABLED` | Runs the agent on useful GitHub webhook events |
 | `AGENT_CHANNEL_SESSIONS_ENABLED` | Resume one Codex session per Discord channel when `AGENT_COMMAND` is `codex exec` |
 | `AGENT_SESSION_STORE_PATH` | Optional override for the Discord channel to Codex session JSON store |
 | `AGENT_WEBHOOK_URL` | Optional external agent endpoint instead of local CLI |
@@ -207,7 +207,10 @@ Recommended events if you want webhook-triggered updates:
 
 Set the webhook content type to `application/json` and use the same secret as `GITHUB_WEBHOOK_SECRET`.
 
-For mention-only testing, you can skip GitHub webhooks. Set `GITHUB_WEBHOOK_SECRET` and `DISCORD_PR_CHANNEL_ID` when you want GitHub events or scheduled triage summaries to post into Discord.
+For mention-only testing, you can skip GitHub webhooks. Set `GITHUB_WEBHOOK_SECRET`
+and `AGENT_AUTO_REVIEW_ENABLED=true` when you want GitHub events to trigger the
+agent. Set `DISCORD_PR_CHANNEL_ID` only when you also want webhook notifications
+or scheduled triage summaries mirrored into Discord.
 
 ## GitHub Permissions
 

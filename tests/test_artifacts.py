@@ -25,6 +25,15 @@ def test_parse_agent_reply_extracts_local_markdown_file_link() -> None:
     assert parsed.files == (Path("/workspace/output/studyos_dummy_latex_presentation.pdf"),)
 
 
+def test_parse_agent_reply_keeps_local_source_link_with_line_number() -> None:
+    text = "See [README.md](/workspaces/Tue-StudyOS/StudyOS_Agent/README.md:19)."
+
+    parsed = parse_agent_reply(text)
+
+    assert parsed.message == text
+    assert parsed.files == ()
+
+
 def test_parse_agent_reply_extracts_bare_local_file_path_once() -> None:
     parsed = parse_agent_reply(
         "Attached /workspace/output/studyos_dummy_presentation.pdf directly: "
@@ -32,6 +41,12 @@ def test_parse_agent_reply_extracts_bare_local_file_path_once() -> None:
     )
 
     assert parsed.files == (Path("/workspace/output/studyos_dummy_presentation.pdf"),)
+
+
+def test_parse_agent_reply_keeps_bare_local_source_path_with_line_number() -> None:
+    parsed = parse_agent_reply("See /workspaces/Tue-StudyOS/StudyOS_Agent/README.md:19.")
+
+    assert parsed.files == ()
 
 
 def test_parse_agent_reply_leaves_normal_json_alone() -> None:

@@ -57,24 +57,25 @@ class StudyBot(commands.Bot):
                 self.queue.task_done()
 
     async def publish_notification(self, notification: DiscordNotification) -> None:
-        if self.settings.discord_pr_channel_id is None:
-            raise RuntimeError("DISCORD_PR_CHANNEL_ID is required for GitHub notifications")
         channel_id = self.settings.discord_pr_channel_id
-        channel = self.get_channel(channel_id)
-        if channel is None:
-            channel = await self.fetch_channel(channel_id)
-        if not isinstance(channel, discord.abc.Messageable):
-            raise RuntimeError("Configured Discord PR channel is not messageable")
+        channel: discord.abc.Messageable | None = None
+        if channel_id is not None:
+            resolved_channel = self.get_channel(channel_id)
+            if resolved_channel is None:
+                resolved_channel = await self.fetch_channel(channel_id)
+            if not isinstance(resolved_channel, discord.abc.Messageable):
+                raise RuntimeError("Configured Discord PR channel is not messageable")
+            channel = resolved_channel
 
-        embed = discord.Embed(
-            title=notification.title,
-            url=notification.url,
-            description=notification.description,
-            color=notification.color,
-        )
-        await channel.send(embed=embed)
-        if notification.followup_message:
-            await channel.send(notification.followup_message[:DISCORD_MESSAGE_LIMIT])
+            embed = discord.Embed(
+                title=notification.title,
+                url=notification.url,
+                description=notification.description,
+                color=notification.color,
+            )
+            await channel.send(embed=embed)
+            if notification.followup_message:
+                await channel.send(notification.followup_message[:DISCORD_MESSAGE_LIMIT])
         if self.settings.agent_auto_review_enabled and notification.agent_prompt:
             try:
                 reply = await self.agent.ask(
@@ -82,9 +83,17 @@ class StudyBot(commands.Bot):
                     user="github-webhook",
                     channel_id=channel_id,
                 )
-                await channel.send(reply.message[:DISCORD_MESSAGE_LIMIT])
+                if channel is not None:
+                    await channel.send(reply.message[:DISCORD_MESSAGE_LIMIT])
             except RuntimeError as exc:
-                await channel.send(f"Agent review failed: {exc}")
+                if channel is not None:
+                    await channel.send(f"Agent review failed: {exc}")
+                else:
+                    logger.warning("GitHub webhook agent run failed: %s", exc)
+        elif channel is None:
+            logger.info(
+                "GitHub webhook notification ignored because no Discord channel is configured"
+            )
 
     async def publish_agent_message(self, message: str) -> None:
         if self.settings.discord_pr_channel_id is None:
