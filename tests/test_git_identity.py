@@ -5,14 +5,14 @@ from typing import Any
 import pytest
 
 from study_discord_agent.git_identity import (
-    CODEX_GIT_EMAIL,
-    CODEX_GIT_NAME,
-    ensure_codex_git_identity,
+    STUDYOS_GIT_EMAIL,
+    STUDYOS_GIT_NAME,
     ensure_git_identity_from_gh,
+    ensure_studyos_git_identity,
 )
 
 
-def test_ensure_codex_git_identity_sets_missing_config(
+def test_ensure_studyos_git_identity_sets_missing_config(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[list[str]] = []
@@ -29,13 +29,13 @@ def test_ensure_codex_git_identity_sets_missing_config(
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
-    ensure_codex_git_identity()
+    ensure_studyos_git_identity()
 
-    assert ["git", "config", "--global", "user.name", CODEX_GIT_NAME] in calls
-    assert ["git", "config", "--global", "user.email", CODEX_GIT_EMAIL] in calls
+    assert ["git", "config", "--global", "user.name", STUDYOS_GIT_NAME] in calls
+    assert ["git", "config", "--global", "user.email", STUDYOS_GIT_EMAIL] in calls
 
 
-def test_ensure_codex_git_identity_replaces_personal_config(
+def test_ensure_studyos_git_identity_replaces_personal_config(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[list[str]] = []
@@ -56,13 +56,13 @@ def test_ensure_codex_git_identity_replaces_personal_config(
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
-    ensure_codex_git_identity()
+    ensure_studyos_git_identity()
 
-    assert ["git", "config", "--global", "user.name", CODEX_GIT_NAME] in calls
-    assert ["git", "config", "--global", "user.email", CODEX_GIT_EMAIL] in calls
+    assert ["git", "config", "--global", "user.name", STUDYOS_GIT_NAME] in calls
+    assert ["git", "config", "--global", "user.email", STUDYOS_GIT_EMAIL] in calls
 
 
-def test_ensure_codex_git_identity_keeps_matching_config(
+def test_ensure_studyos_git_identity_keeps_matching_config(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[list[str]] = []
@@ -72,14 +72,14 @@ def test_ensure_codex_git_identity_keeps_matching_config(
         command = list(args)
         calls.append(command)
         if command == ["git", "config", "--global", "--get", "user.name"]:
-            return subprocess.CompletedProcess(command, 0, stdout=f"{CODEX_GIT_NAME}\n")
+            return subprocess.CompletedProcess(command, 0, stdout=f"{STUDYOS_GIT_NAME}\n")
         if command == ["git", "config", "--global", "--get", "user.email"]:
-            return subprocess.CompletedProcess(command, 0, stdout=f"{CODEX_GIT_EMAIL}\n")
+            return subprocess.CompletedProcess(command, 0, stdout=f"{STUDYOS_GIT_EMAIL}\n")
         raise AssertionError(f"unexpected command: {command}")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
-    ensure_codex_git_identity()
+    ensure_studyos_git_identity()
 
     assert calls == [
         ["git", "config", "--global", "--get", "user.name"],
@@ -104,5 +104,5 @@ def test_ensure_git_identity_from_gh_keeps_backward_compatible_entrypoint(
 
     ensure_git_identity_from_gh()
 
-    assert ["git", "config", "--global", "user.name", CODEX_GIT_NAME] in calls
-    assert ["git", "config", "--global", "user.email", CODEX_GIT_EMAIL] in calls
+    assert ["git", "config", "--global", "user.name", STUDYOS_GIT_NAME] in calls
+    assert ["git", "config", "--global", "user.email", STUDYOS_GIT_EMAIL] in calls

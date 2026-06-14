@@ -31,14 +31,14 @@
 - When asked to create or adjust an automation, edit those automation TOML/Markdown files
   or use Codex app automation tooling. Do not add helper scripts or daemons unless the
   user explicitly asks for that implementation.
-- Use the configured Codex Git commit identity `Codex <codex@openai.com>` for
-  agent commits; do not set commit authorship to a specific student unless
-  explicitly asked.
+- Use the configured StudyOS Git commit identity
+  `StudyOS Org <agents@studyos.invalid>` for agent commits; do not set commit
+  authorship to a specific student unless explicitly asked.
 - Do not add `Co-authored-by`, `Generated-by`, or similar agent attribution trailers to
   commits, PR bodies, issue comments, or release notes unless a human explicitly asks.
   GitHub PRs, issue comments, and review comments are posted by the authenticated
-  GitHub account or app; write them as StudyOS team updates without adding extra
-  runtime attribution trailers.
+  GitHub account or app; write them as StudyOS team updates without listing Codex,
+  StudyOS Agent Gateway, or other agent runtimes as contributors.
 - To update an existing automation, inspect `$CODEX_HOME/automations/*/automation.toml`,
   preserve unrelated fields, and change `status`, `rrule`, `prompt`, or adjacent
   `memory.md` as requested.

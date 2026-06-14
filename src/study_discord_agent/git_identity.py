@@ -3,20 +3,20 @@ import subprocess
 
 logger = logging.getLogger(__name__)
 
-CODEX_GIT_NAME = "Codex"
-CODEX_GIT_EMAIL = "codex@openai.com"
+STUDYOS_GIT_NAME = "StudyOS Org"
+STUDYOS_GIT_EMAIL = "agents@studyos.invalid"
 
 
-def ensure_codex_git_identity() -> None:
-    """Configure the shared runtime Git author for Codex agent commits."""
+def ensure_studyos_git_identity() -> None:
+    """Configure the shared runtime Git author for StudyOS agent commits."""
     current_name = _git_config("user.name")
     current_email = _git_config("user.email")
-    if current_name == CODEX_GIT_NAME and current_email == CODEX_GIT_EMAIL:
+    if current_name == STUDYOS_GIT_NAME and current_email == STUDYOS_GIT_EMAIL:
         return
 
-    _set_git_config("user.name", CODEX_GIT_NAME)
-    _set_git_config("user.email", CODEX_GIT_EMAIL)
-    logger.info("configured Codex Git author identity")
+    _set_git_config("user.name", STUDYOS_GIT_NAME)
+    _set_git_config("user.email", STUDYOS_GIT_EMAIL)
+    logger.info("configured StudyOS Git author identity")
 
 
 def _git_config(key: str) -> str | None:
@@ -40,4 +40,4 @@ def _set_git_config(key: str, value: str) -> None:
 
 def ensure_git_identity_from_gh() -> None:
     """Backward-compatible wrapper for older startup imports."""
-    ensure_codex_git_identity()
+    ensure_studyos_git_identity()

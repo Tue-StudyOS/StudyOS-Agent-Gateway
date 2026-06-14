@@ -62,14 +62,15 @@ production data, or silent failure paths.
 
 When committing is explicitly requested, use logical commit groups with
 conventional prefixes such as `fix:`, `chore:`, `docs:`, and `feat(module):`.
-Use the configured Codex Git commit identity `Codex <codex@openai.com>` for
-agent commits; do not set commit authorship to a specific student unless a
-human explicitly asks.
+Use the configured StudyOS Git commit identity
+`StudyOS Org <agents@studyos.invalid>` for agent commits; do not set commit
+authorship to a specific student unless a human explicitly asks.
 Do not add `Co-authored-by`, `Generated-by`, or similar agent attribution
 trailers to commits, PR bodies, issue comments, or release notes unless a human
 explicitly asks. GitHub PRs, issue comments, and review comments are posted by
 the authenticated GitHub account or app; write them as StudyOS team updates
-without adding extra runtime attribution trailers.
+without listing Codex, StudyOS Agent Gateway, or other agent runtimes as
+contributors.
 Never merge pull requests; humans approve and merge.
 
 Act like an experienced development partner. Help issues become useful

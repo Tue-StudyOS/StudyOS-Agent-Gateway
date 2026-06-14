@@ -136,7 +136,7 @@ the current session and state that subagents are unavailable.
 Gateway startup configures the agent runtime's global Git author as:
 
 ```text
-Codex <codex@openai.com>
+StudyOS Org <agents@studyos.invalid>
 ```
 
 That identity controls commit author/committer metadata for repositories that
