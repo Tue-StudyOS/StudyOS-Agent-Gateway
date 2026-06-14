@@ -1,0 +1,4 @@
+interface:
+  display_name: "Find Skills"
+  short_description: "Find and install reusable agent skills."
+  default_prompt: "Use $find-skills to search for existing skills that could help with this workflow before creating a new one."

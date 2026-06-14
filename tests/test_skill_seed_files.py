@@ -2,6 +2,7 @@ from pathlib import Path
 
 SEED_ROOT = Path("codex") / "skills"
 EXPECTED_SKILL_IDS = {
+    "find-skills",
     "studyos-quality-review",
     "studyos-self-improvement",
     "studyos-skill-expansion",
