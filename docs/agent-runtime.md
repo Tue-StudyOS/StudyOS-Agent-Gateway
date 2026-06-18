@@ -27,6 +27,34 @@ model = "gpt-5.5"
 model_reasoning_effort = "medium"
 ```
 
+## Codex Local Providers
+
+The default StudyOS agent runtime uses OpenAI-hosted Codex after
+`codex login`. To run the same gateway harness against a local model server,
+configure Codex in the mounted `$CODEX_HOME/config.toml` and include `--oss`
+in the command:
+
+```bash
+AGENT_COMMAND="codex exec --oss --json --dangerously-bypass-approvals-and-sandbox --cd /workspaces -"
+```
+
+```toml
+# Default local provider used when Codex runs with --oss.
+oss_provider = "ollama" # or "lmstudio"
+```
+
+Keep provider and auth settings in user-level Codex config, which is
+`$CODEX_HOME/config.toml` inside the container. Do not put provider overrides
+only in a project-local `.codex/config.toml`; Codex ignores provider keys such
+as `model_provider` and `model_providers` there. For custom providers or
+remote-compatible model gateways, define them in the same user-level config and
+select them with Codex's documented provider keys.
+
+See the OpenAI Codex docs for
+[OSS mode local providers](https://developers.openai.com/codex/config-advanced#oss-mode-local-providers)
+and the
+[config reference](https://developers.openai.com/codex/config-reference#configtoml).
+
 The gateway also seeds `$CODEX_HOME/AGENTS.md` and
 `$CODEX_HOME/memories/studyos-course.md` on startup if they do not already
 exist. The canonical course memory is versioned at

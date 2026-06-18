@@ -198,7 +198,7 @@ docker compose -f docker-compose.agent.yml exec studyos-agent-gateway codex logi
 
 See [`.env.example`](./.env.example) for all supported options.
 
-For gateway design notes and Codex integration options, see [Gateway Research Notes](./docs/gateway-research.md).
+For Codex runtime options, including local providers, see [Agent Runtime Design](./docs/agent-runtime.md). For gateway design notes and broader Codex integration options, see [Gateway Research Notes](./docs/gateway-research.md).
 For the current StudyOS workflow, review policy, and automation set, see [StudyOS Collaboration Workflow Notes](./docs/studyos-collaboration-workflow.md).
 
 ## GitHub Webhook
