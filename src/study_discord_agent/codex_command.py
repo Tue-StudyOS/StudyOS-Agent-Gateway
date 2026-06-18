@@ -43,17 +43,9 @@ def extract_agent_result(output: str) -> AgentCommandResult:
         if not isinstance(parsed, dict):
             continue
         event = cast(dict[str, object], parsed)
-        if event.get("type") == "thread.started":
-            value = event.get("thread_id")
-            if isinstance(value, str) and value:
-                session_id = value
-        if event.get("type") == "session_meta":
-            payload_obj = event.get("payload")
-            if isinstance(payload_obj, dict):
-                payload = cast(dict[str, object], payload_obj)
-                value = payload.get("id")
-                if isinstance(value, str) and value:
-                    session_id = value
+        event_session_id = extract_session_id_from_event(event)
+        if event_session_id:
+            session_id = event_session_id
         usage_obj = event.get("usage")
         if isinstance(usage_obj, dict):
             usage = usage.add(_agent_usage_from_event(cast(dict[str, object], usage_obj)))
@@ -68,6 +60,19 @@ def extract_agent_result(output: str) -> AgentCommandResult:
     if messages:
         return AgentCommandResult(message=messages[-1].strip(), session_id=session_id, usage=usage)
     return AgentCommandResult(message=output, session_id=session_id, usage=usage)
+
+
+def extract_session_id_from_event(event: dict[str, object]) -> str | None:
+    if event.get("type") == "thread.started":
+        value = event.get("thread_id")
+        return value if isinstance(value, str) and value else None
+    if event.get("type") == "session_meta":
+        payload_obj = event.get("payload")
+        if isinstance(payload_obj, dict):
+            payload = cast(dict[str, object], payload_obj)
+            value = payload.get("id")
+            return value if isinstance(value, str) and value else None
+    return None
 
 
 def _agent_usage_from_event(usage: dict[str, object]) -> AgentUsage:

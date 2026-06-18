@@ -46,7 +46,7 @@ def _pull_request_notification(payload: dict[str, Any]) -> DiscordNotification |
 
     agent_prompt = None
     followup_message = None
-    if action in {"opened", "ready_for_review", "synchronize"}:
+    if action in {"opened", "reopened", "ready_for_review"}:
         followup_message = (
             f"Review invitation for PR #{number}: pick one small review angle if you have "
             "10 minutes, ask a question if something is unclear, or leave a note about what "
@@ -120,7 +120,7 @@ def _issue_comment_notification(payload: dict[str, Any]) -> DiscordNotification 
     repo_name = str(repository["full_name"])
     author = str(sender["login"])
     body = str(comment.get("body", ""))
-    if AGENT_COMMENT_MARKER in body:
+    if AGENT_COMMENT_MARKER in body or _is_bot_sender(sender):
         return None
 
     return DiscordNotification(
@@ -163,6 +163,10 @@ def _object(payload: dict[str, Any], key: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"GitHub payload missing object: {key}")
     return cast(dict[str, Any], value)
+
+
+def _is_bot_sender(sender: dict[str, Any]) -> bool:
+    return sender.get("type") == "Bot" or str(sender.get("login", "")).endswith("[bot]")
 
 
 def _color_for_action(action: str, merged: bool) -> int:

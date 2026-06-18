@@ -14,10 +14,11 @@ from study_discord_agent.codex_command import (
     AgentCommandResult,
     add_codex_image_args,
     build_codex_resume_args,
-    extract_agent_result,
     is_codex_exec_command,
     with_codex_cd_args,
 )
+from study_discord_agent.command_runner import is_image_path, run_agent_command
+from study_discord_agent.discord_origin import DiscordOriginContext
 from study_discord_agent.discord_worktrees import DiscordWorkspace, DiscordWorktreeManager
 from study_discord_agent.prompt_context import build_agent_prompt
 from study_discord_agent.session_store import ChannelSessionStore, default_session_store_path
@@ -70,6 +71,7 @@ class AgentGateway:
         channel_id: int | None,
         source_message_id: int | None = None,
         attachment_paths: tuple[Path, ...] = (),
+        origin_context: DiscordOriginContext | None = None,
     ) -> AgentReply:
         started_at = time.monotonic()
         logger.info("agent request started source_user=%s channel_id=%s", user, channel_id)
@@ -80,6 +82,7 @@ class AgentGateway:
                 channel_id,
                 source_message_id,
                 attachment_paths,
+                origin_context,
             )
         elif self._command:
             reply = await self._ask_command(
@@ -88,6 +91,7 @@ class AgentGateway:
                 channel_id,
                 source_message_id,
                 attachment_paths,
+                origin_context,
             )
         else:
             raise RuntimeError("Configure AGENT_WEBHOOK_URL or AGENT_COMMAND")
@@ -108,11 +112,12 @@ class AgentGateway:
         channel_id: int | None,
         source_message_id: int | None,
         attachment_paths: tuple[Path, ...],
+        origin_context: DiscordOriginContext | None,
     ) -> AgentReply:
         if not self._webhook_url:
             raise RuntimeError("AGENT_WEBHOOK_URL is not configured")
 
-        payload = {
+        payload: dict[str, object] = {
             "prompt": prompt,
             "source": "discord",
             "user": user,
@@ -120,6 +125,18 @@ class AgentGateway:
             "source_message_id": source_message_id,
             "attachments": [str(path) for path in attachment_paths],
         }
+        if origin_context:
+            payload["origin_context"] = {
+                "channel_id": origin_context.channel_id,
+                "channel_name": origin_context.channel_name,
+                "channel_type": origin_context.channel_type,
+                "thread_id": origin_context.thread_id,
+                "thread_name": origin_context.thread_name,
+                "parent_channel_id": origin_context.parent_channel_id,
+                "parent_channel_name": origin_context.parent_channel_name,
+                "category_id": origin_context.category_id,
+                "category_name": origin_context.category_name,
+            }
         async with httpx.AsyncClient(timeout=60) as client:
             response = await client.post(self._webhook_url, json=payload)
             response.raise_for_status()
@@ -139,6 +156,7 @@ class AgentGateway:
         channel_id: int | None,
         source_message_id: int | None,
         attachment_paths: tuple[Path, ...],
+        origin_context: DiscordOriginContext | None,
     ) -> AgentReply:
         if not self._command:
             raise RuntimeError("AGENT_COMMAND is not configured")
@@ -160,8 +178,9 @@ class AgentGateway:
             source_message_id,
             tuple(str(path) for path in attachment_paths),
             str(workspace.path) if workspace else None,
+            origin_context,
         )
-        image_paths = tuple(path for path in attachment_paths if _is_image_path(path))
+        image_paths = tuple(path for path in attachment_paths if is_image_path(path))
         if self._uses_channel_sessions(args, channel_id, source_message_id):
             assert channel_id is not None
             lock = self._channel_locks.setdefault(channel_id, asyncio.Lock())
@@ -174,7 +193,12 @@ class AgentGateway:
                 )
 
         run_args = add_codex_image_args(args, image_paths) if is_codex_exec_command(args) else args
-        result = await self._run_command(run_args, full_prompt)
+        result = await run_agent_command(
+            run_args,
+            full_prompt,
+            self._workdir,
+            self._timeout_seconds,
+        )
         if channel_id is not None:
             self._record_usage(channel_id, result)
         return self._agent_reply_from_result(result)
@@ -192,41 +216,17 @@ class AgentGateway:
             if session_id
             else add_codex_image_args(args, image_paths)
         )
-        result = await self._run_command(run_args, full_prompt)
+        result = await run_agent_command(
+            run_args,
+            full_prompt,
+            self._workdir,
+            self._timeout_seconds,
+            on_session_id=lambda value: self._session_store.set(channel_id, value),
+        )
         if result.session_id:
             self._session_store.set(channel_id, result.session_id)
         self._record_usage(channel_id, result)
         return self._agent_reply_from_result(result)
-
-    async def _run_command(self, args: list[str], full_prompt: str) -> AgentCommandResult:
-        process = await asyncio.create_subprocess_exec(
-            *args,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=self._workdir,
-        )
-        logger.info("agent command spawned pid=%s command=%s", process.pid, shlex.join(args))
-        try:
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(full_prompt.encode("utf-8")),
-                timeout=self._timeout_seconds,
-            )
-        except TimeoutError:
-            process.kill()
-            await process.wait()
-            raise RuntimeError("Agent command timed out") from None
-
-        if process.returncode != 0:
-            error = stderr.decode("utf-8", errors="replace").strip()
-            logger.warning("agent command failed returncode=%s error=%s", process.returncode, error)
-            raise RuntimeError(f"Agent command failed: {error[:1000]}")
-
-        output = stdout.decode("utf-8", errors="replace").strip()
-        result = extract_agent_result(output)
-        if not result.message:
-            raise RuntimeError("Agent command produced no output")
-        return result
 
     def _uses_channel_sessions(
         self,
@@ -276,7 +276,3 @@ class AgentGateway:
 
     def _record_usage(self, channel_id: int, result: AgentCommandResult) -> None:
         self._usage_store.add(channel_id, result.usage, result.session_id)
-
-
-def _is_image_path(path: Path) -> bool:
-    return path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".gif"}

@@ -1,3 +1,4 @@
+from study_discord_agent.discord_origin import DiscordOriginContext, render_origin_context
 from study_discord_agent.memory import get_studyos_memory_path
 
 
@@ -9,10 +10,12 @@ def build_agent_prompt(
     source_message_id: int | None = None,
     attachment_paths: tuple[str, ...] = (),
     runtime_workspace_path: str | None = None,
+    origin_context: DiscordOriginContext | None = None,
 ) -> str:
     memory_path = get_studyos_memory_path(codex_home)
     attachment_block = _build_attachment_block(attachment_paths)
     workspace_block = _build_runtime_workspace_block(runtime_workspace_path)
+    origin_block = _build_origin_block(origin_context)
     return (
         "You are running from the StudyOS Discord/GitHub collaboration gateway.\n"
         f"Before substantial StudyOS work, consult the project memory at {memory_path} "
@@ -53,6 +56,7 @@ def build_agent_prompt(
         f"Discord user: {user}\n"
         f"Discord channel id: {channel_id if channel_id is not None else 'none'}\n"
         f"Discord source message id: {source_message_id or 'unknown'}\n"
+        f"{origin_block}"
         "Discord context tool: if the request depends on earlier Discord discussion, "
         "or wording like 'this', 'that', 'the repo', or 'what did we discuss' makes the "
         "request ambiguous, fetch channel context before answering. Run "
@@ -124,6 +128,11 @@ def _build_runtime_workspace_block(runtime_workspace_path: str | None) -> str:
         "root, create repo-specific git worktrees below it before editing repository "
         "files."
     )
+
+
+def _build_origin_block(origin_context: DiscordOriginContext | None) -> str:
+    rendered = render_origin_context(origin_context)
+    return f"{rendered}\n" if rendered else ""
 
 
 def _build_attachment_block(attachment_paths: tuple[str, ...]) -> str:
