@@ -104,6 +104,13 @@ class ProactiveMonitor:
         if self._last_processed_human_message_ids.get(channel_id) == latest_human_message_id:
             logger.info("proactive no-new-human-message channel_id=%s", channel_id)
             return
+        if self._has_active_mention_task(channel_id):
+            logger.info("proactive skipped active mention channel_id=%s", channel_id)
+            return
+        if self._mentions_client_user(latest_human_message):
+            self._last_processed_human_message_ids[channel_id] = latest_human_message_id
+            logger.info("proactive skipped bot mention channel_id=%s", channel_id)
+            return
         if self._is_in_post_cooldown(channel_id):
             logger.info("proactive cooldown channel_id=%s", channel_id)
             return
@@ -149,6 +156,17 @@ class ProactiveMonitor:
             return False
         elapsed = (datetime.now(UTC) - last_sent_at).total_seconds()
         return elapsed < self.settings.discord_proactive_min_post_interval_seconds
+
+    def _has_active_mention_task(self, channel_id: int) -> bool:
+        checker = getattr(self.client, "has_active_mention_task", None)
+        return bool(callable(checker) and checker(channel_id))
+
+    def _mentions_client_user(self, message: Any) -> bool:
+        user = getattr(self.client, "user", None)
+        if user is None:
+            return False
+        mentions = getattr(message, "mentions", ())
+        return any(mention == user for mention in mentions)
 
     def latest_recent_human_message(self, messages: list[Any]) -> Any | None:
         human_messages = [

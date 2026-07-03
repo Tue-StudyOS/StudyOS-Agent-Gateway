@@ -213,6 +213,10 @@ class StudyBot(commands.Bot):
             if self._active_mention_tasks.get(channel_id) is task:
                 self._active_mention_tasks.pop(channel_id, None)
 
+    def has_active_mention_task(self, channel_id: int) -> bool:
+        task = self._active_mention_tasks.get(channel_id)
+        return task is not None and not task.done()
+
     async def _handle_agent_mention(
         self,
         message: discord.Message,
