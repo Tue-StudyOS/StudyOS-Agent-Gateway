@@ -13,6 +13,6 @@ coordination update. Do not start implementation unless a human explicitly asked
 the agent to implement a specific issue."""
 status = "PAUSED"
 rrule = "FREQ=MINUTELY;INTERVAL=30"
-model = "gpt-5.5"
+model = "gpt-5.6-sol"
 reasoning_effort = "medium"
 target_thread_id = "REPLACE_WITH_CODEX_THREAD_ID"

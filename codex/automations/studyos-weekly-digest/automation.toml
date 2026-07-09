@@ -9,7 +9,7 @@ or duplicate tickets, blockers, and suggested next milestones for the course.
 Keep it constructive and friendly. Never merge PRs."""
 status = "PAUSED"
 rrule = "RRULE:FREQ=WEEKLY;BYDAY=TH;BYHOUR=16;BYMINUTE=0"
-model = "gpt-5.5"
+model = "gpt-5.6-sol"
 reasoning_effort = "medium"
 execution_environment = "local"
 cwds = ["/workspace"]

@@ -13,7 +13,7 @@ Output issue numbers and the exact refinement comment or next question that
 would unblock the students."""
 status = "PAUSED"
 rrule = "RRULE:FREQ=HOURLY;INTERVAL=6"
-model = "gpt-5.5"
+model = "gpt-5.6-sol"
 reasoning_effort = "medium"
 execution_environment = "local"
 cwds = ["/workspace"]

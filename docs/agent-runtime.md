@@ -23,7 +23,7 @@ The agent image seeds `codex/config.toml` into `$CODEX_HOME/config.toml` so
 every gateway invocation uses the same Codex profile:
 
 ```toml
-model = "gpt-5.5"
+model = "gpt-5.6-sol"
 model_reasoning_effort = "medium"
 ```
 

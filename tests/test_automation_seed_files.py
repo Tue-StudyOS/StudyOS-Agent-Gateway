@@ -34,7 +34,7 @@ def test_static_automations_are_valid_paused_toml() -> None:
         assert data["id"] == path.parent.name
         assert data["status"] == "PAUSED"
         assert data["kind"] in {"cron", "heartbeat"}
-        assert data["model"] == "gpt-5.5"
+        assert data["model"] == "gpt-5.6-sol"
         assert data["reasoning_effort"] == "medium"
         assert data["prompt"].strip()
         assert data["rrule"].strip()
@@ -77,5 +77,5 @@ def test_automations_encode_human_gate_and_digest_schedule() -> None:
 def test_codex_config_seed_sets_medium_reasoning() -> None:
     data = tomllib.loads(CODEX_CONFIG_PATH.read_text(encoding="utf-8"))
 
-    assert data["model"] == "gpt-5.5"
+    assert data["model"] == "gpt-5.6-sol"
     assert data["model_reasoning_effort"] == "medium"

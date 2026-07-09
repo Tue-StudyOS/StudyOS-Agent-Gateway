@@ -59,3 +59,10 @@ def test_agent_image_exposes_seeded_skills_via_codex_admin_path() -> None:
     assert "COPY codex ./codex" in dockerfile
     assert "mkdir -p /etc/codex/skills" in dockerfile
     assert "cp -R ./codex/skills/. /etc/codex/skills/" in dockerfile
+
+
+def test_agent_image_pins_codex_cli_version() -> None:
+    dockerfile = Path("Dockerfile.agent").read_text(encoding="utf-8")
+
+    assert "ARG CODEX_VERSION=0.144.0" in dockerfile
+    assert 'npm install -g "@openai/codex@${CODEX_VERSION}"' in dockerfile

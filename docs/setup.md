@@ -94,8 +94,9 @@ docker compose -f docker-compose.agent.yml exec studyos-agent-gateway codex logi
 ```
 
 The provided agent image installs Node from the official Node image, GitHub CLI
-from GitHub's apt repository, Graphviz for rendered diagrams, and
-`@openai/codex` through npm. If your agent needs compilers, browser tooling,
+from GitHub's apt repository, Graphviz for rendered diagrams, and Codex CLI
+`0.144.0` through npm. Override the `CODEX_VERSION` build argument when updating
+the pinned CLI release. If your agent needs compilers, browser tooling,
 CUDA tools, or course-specific system packages, extend `Dockerfile.agent` for
 that course environment.
 

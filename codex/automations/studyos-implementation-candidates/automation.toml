@@ -14,7 +14,7 @@ GitHub issue comment that explicitly asks the agent to start. Never merge PRs.
 Output ready candidates, why they are ready, and any remaining risks."""
 status = "PAUSED"
 rrule = "RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0"
-model = "gpt-5.5"
+model = "gpt-5.6-sol"
 reasoning_effort = "medium"
 execution_environment = "local"
 cwds = ["/workspace"]
