@@ -13,7 +13,6 @@ class _StopTaskButton(discord.ui.Button[discord.ui.LayoutView]):
             label="Stop task",
             style=discord.ButtonStyle.danger,
             custom_id=f"studyos:stop:{owner_id}",
-            emoji="⏹️",
         )
         self._owner_id = owner_id
         self._on_stop = on_stop

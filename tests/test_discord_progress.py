@@ -176,6 +176,7 @@ async def test_structured_plan_renders_as_bounded_checklist() -> None:
     assert "`[-]` Build the progress card" in rendered
     assert "`[ ]` Deploy to the Jetson" in rendered
     assert "Now: Running focused tests" in rendered
+    assert _stop_button(source.status.view).emoji is None
 
 
 @pytest.mark.asyncio
