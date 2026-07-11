@@ -1,5 +1,7 @@
 import asyncio
+import json
 import logging
+import re
 from datetime import UTC, datetime
 from typing import Any, cast
 
@@ -10,6 +12,22 @@ from study_discord_agent.config import Settings
 from study_discord_agent.discord_markdown import discord_safe_markdown
 
 logger = logging.getLogger(__name__)
+MIN_HUMAN_RESPONSE_WINDOW_SECONDS = 120
+MAX_PROACTIVE_MESSAGE_CHARS = 500
+MAX_PROACTIVE_MESSAGE_LINES = 4
+FAILURE_SIGNAL_RE = re.compile(
+    r"(?:\bblocked\b|\bblocker\b|\bstuck\b|\berror\b|\bexception\b|\btraceback\b|"
+    r"\bbug\b|\bbroken\b|\bfail(?:ed|ing)?\b|\bcrash(?:ed|ing)?\b|\btimeout\b|"
+    r"\bdoesn['’]?t work\b|\bcan['’]?t (?:build|run|connect|authenticate)\b)",
+    re.IGNORECASE,
+)
+TECHNICAL_CONTEXT_RE = re.compile(
+    r"\b(?:api|auth|token|code|repo|git|github|branch|build|test|ci|deploy|server|"
+    r"client|database|db|parser|compiler|package|dependency|model|agent|discord|"
+    r"endpoint|request|response)\b",
+    re.IGNORECASE,
+)
+PROACTIVE_MARKDOWN_RE = re.compile(r"(?m)^\s*(?:#{1,6}\s|[-*>]\s|\d+[.)]\s)")
 
 
 class ProactiveMonitor:
@@ -69,6 +87,8 @@ class ProactiveMonitor:
             return False
         if not callable(getattr(channel, "history", None)):
             return False
+        if not is_private_group_space(channel):
+            return False
 
         guild = getattr(channel, "guild", None)
         member = getattr(guild, "me", None)
@@ -113,35 +133,56 @@ class ProactiveMonitor:
             f"{message.author}: {message.clean_content}" for message in reversed(messages)
         )
         prompt = (
-            "Review this recent Discord channel history as the StudyOS course coding "
-            "partner. Prefer NO_ACTION unless one concise message would clearly help: "
-            "unblock the group, add concrete technical/product context, identify a "
-            "security/privacy/cost risk, connect the discussion to reusable StudyOS/Tue "
-            "API wrapper capabilities, or suggest a next step. Do not spam, do not send "
-            "multiple follow-ups in a row, and do not create issues or PRs from a "
-            "proactive check; instead ask whether the group wants an issue/spec or "
-            "implementation when the discussion looks ready. If no response is useful, "
-            f"answer exactly NO_ACTION.\n\nRecent messages:\n{context}"
+            "Decide whether one tiny proactive reply would unblock this StudyOS group. "
+            "Silence is the default. Post only when the latest human message contains an "
+            "unanswered technical blocker and you can add a concrete fix, diagnostic, or "
+            "missing fact that the students have not already said. Do not summarize the "
+            "conversation, cheerlead, restate a question, offer generic next steps, or ask "
+            "whether they want an issue/PR. Do not post code, Markdown sections, lists, or "
+            "more than two short sentences. Sound like a friendly fellow student, not a "
+            'support bot. Return only JSON: {"action":"NO_ACTION"} or '
+            '{"action":"POST","message":"..."}.\n\n'
+            f"Recent messages:\n{context}"
         )
         reply = await self.agent.ask(
             prompt,
             user="discord-proactive-monitor",
             channel_id=channel_id,
         )
-        text = discord_safe_markdown(reply.message).strip()
-        if not text or text == "NO_ACTION":
+        text = proactive_post_text(reply.message)
+        if text is None or reply.files:
             logger.info("proactive no-action channel_id=%s", channel_id)
+            return
+        if not await self._still_actionable(channel, latest_human_message_id):
+            logger.info("proactive became-stale channel_id=%s", channel_id)
             return
         if self.settings.discord_proactive_dry_run:
             logger.info("proactive dry-run channel_id=%s message=%s", channel_id, text[:500])
             return
-        sent_message = await channel.send(text[:1900])
+        sent_message = await channel.send(
+            text,
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
         self._last_sent_at_by_channel[channel_id] = datetime.now(UTC)
         logger.info(
             "proactive sent channel_id=%s message_id=%s",
             channel_id,
             getattr(sent_message, "id", None),
         )
+
+    async def _still_actionable(
+        self,
+        channel: discord.abc.Messageable,
+        expected_message_id: int,
+    ) -> bool:
+        if not is_private_group_space(channel):
+            return False
+        history = getattr(channel, "history", None)
+        if not callable(history):
+            return False
+        messages = [message async for message in cast(Any, channel).history(limit=20)]
+        latest = self.latest_recent_human_message(messages)
+        return latest is not None and int(latest.id) == expected_message_id
 
     def _is_in_post_cooldown(self, channel_id: int) -> bool:
         last_sent_at = self._last_sent_at_by_channel.get(channel_id)
@@ -161,6 +202,72 @@ class ProactiveMonitor:
 
         latest = max(human_messages, key=lambda message: message.created_at)
         age_seconds = (datetime.now(UTC) - latest.created_at).total_seconds()
-        if age_seconds > self.settings.discord_proactive_recent_activity_seconds:
+        if not (
+            MIN_HUMAN_RESPONSE_WINDOW_SECONDS
+            <= age_seconds
+            <= self.settings.discord_proactive_recent_activity_seconds
+        ):
             return None
+        if not is_high_signal_message(str(getattr(latest, "clean_content", ""))):
+            return None
+        if self.client.user in getattr(latest, "mentions", ()):
+            return None
+        for message in messages:
+            author = getattr(message, "author", None)
+            if not getattr(author, "bot", False):
+                continue
+            bot_age = (datetime.now(UTC) - message.created_at).total_seconds()
+            if bot_age <= self.settings.discord_proactive_min_post_interval_seconds:
+                return None
         return latest
+
+
+def is_high_signal_message(text: str) -> bool:
+    return bool(
+        FAILURE_SIGNAL_RE.search(text) or ("?" in text and TECHNICAL_CONTEXT_RE.search(text))
+    )
+
+
+def is_group_space(channel: Any) -> bool:
+    names = (
+        str(getattr(channel, "name", "")).lower(),
+        str(getattr(getattr(channel, "parent", None), "name", "")).lower(),
+    )
+    return any(name.startswith("group-") for name in names)
+
+
+def is_private_group_space(channel: Any) -> bool:
+    if not is_group_space(channel):
+        return False
+    guild = getattr(channel, "guild", None)
+    default_role = getattr(guild, "default_role", None)
+    permissions_for = getattr(channel, "permissions_for", None)
+    if default_role is None or not callable(permissions_for):
+        return False
+    return not bool(getattr(permissions_for(default_role), "view_channel", True))
+
+
+def proactive_post_text(response: str) -> str | None:
+    try:
+        data = json.loads(response)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    payload = cast(dict[str, object], data)
+    if payload.get("action") != "POST":
+        return None
+    message = payload.get("message")
+    if not isinstance(message, str):
+        return None
+    text = discord_safe_markdown(message).strip()
+    if (
+        not text
+        or len(text) > MAX_PROACTIVE_MESSAGE_CHARS
+        or len(text.splitlines()) > MAX_PROACTIVE_MESSAGE_LINES
+        or "```" in text
+        or "~~~" in text
+        or PROACTIVE_MARKDOWN_RE.search(text)
+    ):
+        return None
+    return text

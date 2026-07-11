@@ -19,6 +19,7 @@ from study_discord_agent.discord_markdown import discord_safe_markdown
 from study_discord_agent.discord_message_context import is_cancel_prompt
 from study_discord_agent.discord_origin import DiscordOriginContext
 from study_discord_agent.discord_progress import DiscordProgressMessage
+from study_discord_agent.discord_reply_content import prepare_discord_reply
 
 logger = logging.getLogger(__name__)
 MAX_SEEN_MESSAGE_IDS = 2048
@@ -208,17 +209,30 @@ async def _deliver_reply(
     reply: AgentReply,
     settings: Settings,
 ) -> None:
-    if not reply.files:
-        await message.reply(_discord_text(reply.message))
-        return
     roots = tuple(Path(root) for root in settings.discord_artifact_allowed_root_list)
-    paths = validate_artifact_files(reply.files, roots, settings.discord_artifact_max_bytes)
-    files = [discord.File(path) for path in paths]
+    if not roots:
+        raise RuntimeError("DISCORD_ARTIFACT_ALLOWED_ROOTS must contain at least one path")
+    prepared = prepare_discord_reply(reply.message, reply.files, roots[0], message.id)
+    if not prepared.files:
+        await message.reply(_discord_text(prepared.message))
+        return
+    files: list[discord.File] = []
     try:
-        await message.reply(content=_discord_text(reply.message) or None, files=files)
+        paths = validate_artifact_files(
+            prepared.files,
+            roots,
+            settings.discord_artifact_max_bytes,
+        )
+        files = [discord.File(path) for path in paths]
+        await message.reply(content=_discord_text(prepared.message) or None, files=files)
     finally:
         for file in files:
             file.close()
+        if prepared.generated_file:
+            try:
+                prepared.generated_file.unlink(missing_ok=True)
+            except OSError as exc:
+                logger.warning("failed to clean generated Discord reply attachment: %s", exc)
 
 
 async def _delete_progress(progress: DiscordProgressMessage) -> None:

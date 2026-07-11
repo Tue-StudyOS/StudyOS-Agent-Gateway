@@ -14,6 +14,9 @@ def test_ensure_studyos_memory_creates_default_entrypoint(tmp_path: Path) -> Non
     assert "experienced co-developer" in text
     assert "Discord-native thinking partner" in text
     assert "Proactive Discord Participation" in text
+    assert "private `group-*` channels" in text
+    assert "corporate support prose is not" in text
+    assert "Attach them as files" in text
     assert "Product Discovery And Reuse" in text
     assert "Persistent Learnings" in text
     assert "Delivery Lifecycle" in text
@@ -70,8 +73,8 @@ def test_ensure_global_agents_creates_codex_home_guidance(tmp_path: Path) -> Non
     assert "CI/GitHub Actions" in text
     assert "short Discord-friendly answers" in text
     assert "keep the discussion flowing" in text
-    assert "substantive work such as research" in text
-    assert "helpful teammate and thinking partner" in text
+    assert "longer research, code, logs" in text
+    assert "friendly, highly technical fellow student" in text
     assert "never force memes" in text
     assert "what was verified" in text
     assert "humans approve and merge" in text
@@ -80,6 +83,7 @@ def test_ensure_global_agents_creates_codex_home_guidance(tmp_path: Path) -> Non
     assert "To pause or activate an automation, change `status`" in text
     assert "$CODEX_HOME/memories/studyos-course.md" in text
     assert "Runtime Learnings" in text
+    assert "friendly, highly technical fellow student" in text
     assert "Do not store secrets" in text
     assert "Persistent Learnings" in text
 
@@ -106,6 +110,22 @@ def test_ensure_global_agents_refreshes_generated_guidance(tmp_path: Path) -> No
     assert "$CODEX_HOME/automations/*/automation.toml" in text
     assert "Persistent Learnings" in text
     assert "Runtime Learnings" in text
+    assert "friendly, highly technical fellow student" in text
+
+
+def test_ensure_global_agents_preserves_notes_inside_managed_heading(tmp_path: Path) -> None:
+    path = tmp_path / "AGENTS.md"
+    path.write_text(
+        "# Global Codex Guidance\n\n## Communication style\n\nKeep my custom tone note.\n",
+        encoding="utf-8",
+    )
+
+    ensure_global_agents(str(tmp_path))
+    text = path.read_text(encoding="utf-8")
+
+    assert "Keep my custom tone note." in text
+    assert "studyos-managed:communication-style:start" in text
+    assert "friendly, highly technical fellow student" in text
 
 
 def test_build_agent_prompt_points_to_memory(tmp_path: Path) -> None:
@@ -133,6 +153,9 @@ def test_build_agent_prompt_points_to_memory(tmp_path: Path) -> None:
     assert "Match the response language" in prompt
     assert "renders lifecycle and tool progress automatically" in prompt
     assert "Do not create a separate progress message" in prompt
+    assert "one to three short sentences" in prompt
+    assert "very capable fellow student" in prompt
+    assert "Never paste a Markdown document" in prompt
     assert "Always attach files" in prompt
     assert "local paths are not usable in Discord" in prompt
     assert "Never print or commit the token" in prompt
@@ -187,7 +210,67 @@ def test_ensure_studyos_memory_appends_missing_sections(tmp_path: Path) -> None:
     assert "Persistent Learnings" in text
     assert "Delivery Lifecycle" in text
     assert "Codex Runtime And Automations" in text
+    assert "private `group-*` channels" in text
+    assert "Never paste multi-line code" in text
     assert "Python heartbeat" not in text
+
+
+def test_ensure_studyos_memory_preserves_notes_inside_managed_headings(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memories"
+    memory_dir.mkdir()
+    path = memory_dir / "studyos-course.md"
+    path.write_text(
+        "# StudyOS Agent Memory\n\n"
+        "## Proactive Discord Participation\n\nKeep this proactive note.\n\n"
+        "## Discord Behavior\n\nKeep this Discord note.\n",
+        encoding="utf-8",
+    )
+
+    ensure_studyos_memory(str(tmp_path))
+    text = path.read_text(encoding="utf-8")
+
+    assert "Keep this proactive note." in text
+    assert "Keep this Discord note." in text
+    assert "studyos-managed:proactive-discord:start" in text
+    assert "studyos-managed:discord-behavior:start" in text
+
+
+def test_ensure_studyos_memory_migrates_unchanged_legacy_section(tmp_path: Path) -> None:
+    memory_dir = tmp_path / "memories"
+    memory_dir.mkdir()
+    path = memory_dir / "studyos-course.md"
+    path.write_text(
+        """# StudyOS Agent Memory
+
+## Discord Behavior
+
+- Treat mentions as invitations into the conversation.
+- Answer technical questions directly; ask one or two crisp questions when
+  blocked.
+- If a task requires repository changes, summarize the intended plan before
+  making larger changes.
+- Use GitHub links, issue numbers, and PR numbers when available.
+- Keep replies readable in Discord. For long outputs, summarize and point to
+  files, issues, or PRs.
+- When a diagram, screenshot, or generated document would make the discussion
+  clearer, create it as a Discord artifact instead of pasting long text.
+- When a user asks for a file, attach it in the Discord reply instead of only
+  returning local paths or Markdown links.
+
+## GitHub Workflow
+
+Keep this section.
+""",
+        encoding="utf-8",
+    )
+
+    ensure_studyos_memory(str(tmp_path))
+    text = path.read_text(encoding="utf-8")
+
+    assert "studyos-managed:discord-behavior:start" in text
+    assert "summarize and point to" not in text
+    assert "Never paste multi-line code" in text
+    assert "Keep this section." in text
 
 
 def test_ensure_studyos_memory_repairs_incomplete_seed(tmp_path: Path) -> None:
