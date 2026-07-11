@@ -45,21 +45,25 @@ async def run() -> None:
         ),
     )
 
-    async with bot:
-        tasks = [
-            bot.start(settings.discord_token_value),
-            server.serve(),
-        ]
-        if settings.github_poll_enabled:
-            tasks.append(
-                run_github_triage_loop(
-                    settings,
-                    github,
-                    agent,
-                    bot.publish_agent_message,
-                ),
-            )
-        await asyncio.gather(*tasks)
+    await agent.start()
+    try:
+        async with bot:
+            tasks = [
+                bot.start(settings.discord_token_value),
+                server.serve(),
+            ]
+            if settings.github_poll_enabled:
+                tasks.append(
+                    run_github_triage_loop(
+                        settings,
+                        github,
+                        agent,
+                        bot.publish_agent_message,
+                    ),
+                )
+            await asyncio.gather(*tasks)
+    finally:
+        await agent.close()
 
 
 def main() -> None:

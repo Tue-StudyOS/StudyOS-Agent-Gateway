@@ -3,13 +3,13 @@ from pathlib import Path
 
 import pytest
 
-from study_discord_agent.agent import (
-    AgentGateway,
+from study_discord_agent.agent import AgentGateway
+from study_discord_agent.codex_command import (
     add_codex_image_args,
     build_codex_resume_args,
+    extract_agent_result,
     with_codex_cd_args,
 )
-from study_discord_agent.codex_command import extract_agent_result
 
 
 @pytest.mark.asyncio

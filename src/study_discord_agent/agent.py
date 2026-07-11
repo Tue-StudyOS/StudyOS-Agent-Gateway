@@ -1,19 +1,23 @@
-import asyncio
 import logging
 import os
 import shlex
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
 
-import httpx
-
-from study_discord_agent.artifacts import parse_agent_reply, parse_artifact_files
+from study_discord_agent.agent_progress import AgentProgress
+from study_discord_agent.agent_webhook import request_agent_webhook
+from study_discord_agent.artifacts import parse_agent_reply
+from study_discord_agent.codex_app_server import CodexAppServerClient
+from study_discord_agent.codex_app_server_command import parse_codex_app_server_command
+from study_discord_agent.codex_app_server_runtime import (
+    CodexAppServerRuntime,
+    SteerResult,
+)
 from study_discord_agent.codex_command import (
     AgentCommandResult,
     add_codex_image_args,
-    build_codex_resume_args,
     is_codex_exec_command,
     with_codex_cd_args,
 )
@@ -25,6 +29,7 @@ from study_discord_agent.session_store import ChannelSessionStore, default_sessi
 from study_discord_agent.usage_store import ChannelUsageStore, default_usage_store_path
 
 logger = logging.getLogger(__name__)
+ProgressSink = Callable[[AgentProgress], Awaitable[None]]
 
 
 @dataclass(frozen=True)
@@ -52,8 +57,6 @@ class AgentGateway:
         self._command = command
         self._workdir = workdir
         self._timeout_seconds = timeout_seconds
-        self._channel_sessions_enabled = channel_sessions_enabled
-        self._channel_locks: dict[int, asyncio.Lock] = {}
         store_path = session_store_path or str(default_session_store_path(codex_home))
         self._session_store = ChannelSessionStore(store_path)
         usage_path = usage_store_path or str(default_usage_store_path(codex_home))
@@ -63,6 +66,35 @@ class AgentGateway:
             if discord_worktree_root
             else None
         )
+        args = shlex.split(command) if command else []
+        launch = (
+            parse_codex_app_server_command(args)
+            if channel_sessions_enabled and is_codex_exec_command(args)
+            else None
+        )
+        self._codex_runtime = (
+            CodexAppServerRuntime(
+                CodexAppServerClient(launch.command),
+                self._session_store,
+                model=launch.model,
+                model_provider=launch.model_provider,
+                approval_policy=launch.approval_policy,
+                sandbox=launch.sandbox,
+                turn_timeout_seconds=timeout_seconds,
+            )
+            if channel_sessions_enabled and launch
+            else None
+        )
+        self._codex_cwd = launch.cwd if launch and launch.cwd else workdir
+        self._channel_workspaces: dict[int, Path] = {}
+
+    async def start(self) -> None:
+        if self._codex_runtime:
+            await self._codex_runtime.start()
+
+    async def close(self) -> None:
+        if self._codex_runtime:
+            await self._codex_runtime.close()
 
     async def ask(
         self,
@@ -72,18 +104,21 @@ class AgentGateway:
         source_message_id: int | None = None,
         attachment_paths: tuple[Path, ...] = (),
         origin_context: DiscordOriginContext | None = None,
+        on_progress: ProgressSink | None = None,
     ) -> AgentReply:
         started_at = time.monotonic()
         logger.info("agent request started source_user=%s channel_id=%s", user, channel_id)
         if self._webhook_url:
-            reply = await self._ask_webhook(
-                prompt,
-                user,
-                channel_id,
-                source_message_id,
-                attachment_paths,
-                origin_context,
+            message, files = await request_agent_webhook(
+                self._webhook_url,
+                prompt=prompt,
+                user=user,
+                channel_id=channel_id,
+                source_message_id=source_message_id,
+                attachment_paths=attachment_paths,
+                origin_context=origin_context,
             )
+            reply = AgentReply(message=message, files=files)
         elif self._command:
             reply = await self._ask_command(
                 prompt,
@@ -92,6 +127,7 @@ class AgentGateway:
                 source_message_id,
                 attachment_paths,
                 origin_context,
+                on_progress,
             )
         else:
             raise RuntimeError("Configure AGENT_WEBHOOK_URL or AGENT_COMMAND")
@@ -105,50 +141,6 @@ class AgentGateway:
         )
         return reply
 
-    async def _ask_webhook(
-        self,
-        prompt: str,
-        user: str,
-        channel_id: int | None,
-        source_message_id: int | None,
-        attachment_paths: tuple[Path, ...],
-        origin_context: DiscordOriginContext | None,
-    ) -> AgentReply:
-        if not self._webhook_url:
-            raise RuntimeError("AGENT_WEBHOOK_URL is not configured")
-
-        payload: dict[str, object] = {
-            "prompt": prompt,
-            "source": "discord",
-            "user": user,
-            "channel_id": channel_id,
-            "source_message_id": source_message_id,
-            "attachments": [str(path) for path in attachment_paths],
-        }
-        if origin_context:
-            payload["origin_context"] = {
-                "channel_id": origin_context.channel_id,
-                "channel_name": origin_context.channel_name,
-                "channel_type": origin_context.channel_type,
-                "thread_id": origin_context.thread_id,
-                "thread_name": origin_context.thread_name,
-                "parent_channel_id": origin_context.parent_channel_id,
-                "parent_channel_name": origin_context.parent_channel_name,
-                "category_id": origin_context.category_id,
-                "category_name": origin_context.category_name,
-            }
-        async with httpx.AsyncClient(timeout=60) as client:
-            response = await client.post(self._webhook_url, json=payload)
-            response.raise_for_status()
-            data = cast(dict[str, Any], response.json())
-
-        message = data.get("message")
-        if not isinstance(message, str) or not message.strip():
-            raise RuntimeError("Agent response must contain a non-empty message")
-        parsed = parse_agent_reply(message)
-        files = parsed.files + parse_artifact_files(data.get("files"))
-        return AgentReply(message=parsed.message, files=files)
-
     async def _ask_command(
         self,
         prompt: str,
@@ -157,6 +149,7 @@ class AgentGateway:
         source_message_id: int | None,
         attachment_paths: tuple[Path, ...],
         origin_context: DiscordOriginContext | None,
+        on_progress: ProgressSink | None,
     ) -> AgentReply:
         if not self._command:
             raise RuntimeError("AGENT_COMMAND is not configured")
@@ -170,6 +163,8 @@ class AgentGateway:
         )
         if workspace:
             args = with_codex_cd_args(args, workspace.path)
+            if channel_id is not None:
+                self._channel_workspaces[channel_id] = workspace.path
         full_prompt = build_agent_prompt(
             prompt,
             user,
@@ -181,16 +176,21 @@ class AgentGateway:
             origin_context,
         )
         image_paths = tuple(path for path in attachment_paths if is_image_path(path))
-        if self._uses_channel_sessions(args, channel_id, source_message_id):
-            assert channel_id is not None
-            lock = self._channel_locks.setdefault(channel_id, asyncio.Lock())
-            async with lock:
-                return await self._ask_codex_channel_session(
-                    args,
-                    full_prompt,
-                    channel_id,
-                    image_paths,
-                )
+        if self._codex_runtime and channel_id is not None and source_message_id is not None:
+            result = await self._codex_runtime.run(
+                channel_id=channel_id,
+                prompt=full_prompt,
+                cwd=workspace.path if workspace else self._codex_cwd,
+                local_images=image_paths,
+                on_progress=on_progress,
+            )
+            command_result = AgentCommandResult(
+                message=result.message,
+                session_id=result.thread_id,
+                usage=result.usage,
+            )
+            self._record_usage(channel_id, command_result)
+            return self._agent_reply_from_result(command_result)
 
         run_args = add_codex_image_args(args, image_paths) if is_codex_exec_command(args) else args
         result = await run_agent_command(
@@ -203,43 +203,38 @@ class AgentGateway:
             self._record_usage(channel_id, result)
         return self._agent_reply_from_result(result)
 
-    async def _ask_codex_channel_session(
+    async def steer(
         self,
-        args: list[str],
-        full_prompt: str,
+        *,
+        prompt: str,
+        user: str,
         channel_id: int,
-        image_paths: tuple[Path, ...],
-    ) -> AgentReply:
-        session_id = self._session_store.get(channel_id)
-        run_args = (
-            build_codex_resume_args(args, session_id, image_paths)
-            if session_id
-            else add_codex_image_args(args, image_paths)
+        source_message_id: int,
+        attachment_paths: tuple[Path, ...] = (),
+        origin_context: DiscordOriginContext | None = None,
+    ) -> SteerResult:
+        if self._codex_runtime is None:
+            return SteerResult.NO_ACTIVE_TURN
+        workspace = self._channel_workspaces.get(channel_id)
+        full_prompt = build_agent_prompt(
+            prompt,
+            user,
+            channel_id,
+            os.environ.get("CODEX_HOME"),
+            source_message_id,
+            tuple(str(path) for path in attachment_paths),
+            str(workspace) if workspace else None,
+            origin_context,
         )
-        result = await run_agent_command(
-            run_args,
-            full_prompt,
-            self._workdir,
-            self._timeout_seconds,
-            on_session_id=lambda value: self._session_store.set(channel_id, value),
+        images = tuple(path for path in attachment_paths if is_image_path(path))
+        return await self._codex_runtime.steer(
+            channel_id=channel_id,
+            prompt=full_prompt,
+            local_images=images,
         )
-        if result.session_id:
-            self._session_store.set(channel_id, result.session_id)
-        self._record_usage(channel_id, result)
-        return self._agent_reply_from_result(result)
 
-    def _uses_channel_sessions(
-        self,
-        args: list[str],
-        channel_id: int | None,
-        source_message_id: int | None,
-    ) -> bool:
-        return (
-            self._channel_sessions_enabled
-            and channel_id is not None
-            and source_message_id is not None
-            and is_codex_exec_command(args)
-        )
+    async def interrupt(self, channel_id: int) -> bool:
+        return await self._codex_runtime.interrupt(channel_id) if self._codex_runtime else False
 
     async def _prepare_discord_workspace(
         self,

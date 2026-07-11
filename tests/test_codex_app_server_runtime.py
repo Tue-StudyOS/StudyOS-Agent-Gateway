@@ -1,0 +1,281 @@
+import asyncio
+from collections.abc import Callable, Sequence
+from pathlib import Path
+from typing import cast
+
+import pytest
+
+from study_discord_agent.codex_app_server import CodexAppServerClient
+from study_discord_agent.codex_app_server_protocol import (
+    AppServerNotification,
+    JsonObject,
+    NotificationHandler,
+    ThreadRef,
+    TurnRef,
+)
+from study_discord_agent.codex_app_server_runtime import (
+    AgentTurnInterrupted,
+    CodexAppServerRuntime,
+    SteerResult,
+)
+from study_discord_agent.session_store import ChannelSessionStore
+
+
+class FakeAppServerClient:
+    def __init__(self) -> None:
+        self.handlers: list[NotificationHandler] = []
+        self.started = 0
+        self.started_threads: list[str | Path | None] = []
+        self.resumed_threads: list[str] = []
+        self.started_turns: list[tuple[str, str, tuple[str | Path, ...]]] = []
+        self.steered_turns: list[tuple[str, str, str]] = []
+        self.interrupted_turns: list[tuple[str, str]] = []
+        self.turn_started = asyncio.Event()
+        self.complete_during_start = False
+
+    async def start(self) -> object:
+        self.started += 1
+        return object()
+
+    def subscribe(self, handler: NotificationHandler) -> Callable[[], None]:
+        self.handlers.append(handler)
+        return lambda: self.handlers.remove(handler)
+
+    async def start_thread(self, *, cwd: str | Path | None = None, **_: object) -> ThreadRef:
+        self.started_threads.append(cwd)
+        return ThreadRef(f"thread-{len(self.started_threads)}")
+
+    async def resume_thread(self, thread_id: str, **_: object) -> ThreadRef:
+        self.resumed_threads.append(thread_id)
+        return ThreadRef(thread_id)
+
+    async def start_turn(
+        self,
+        thread_id: str,
+        prompt: str,
+        *,
+        local_images: Sequence[str | Path] = (),
+    ) -> TurnRef:
+        self.started_turns.append((thread_id, prompt, tuple(local_images)))
+        self.turn_started.set()
+        if self.complete_during_start:
+            await self.emit(
+                "item/completed",
+                {
+                    "threadId": thread_id,
+                    "turnId": "turn-1",
+                    "item": {
+                        "type": "agentMessage",
+                        "phase": "final_answer",
+                        "text": "fast result",
+                    },
+                },
+            )
+            await self.emit(
+                "turn/completed",
+                {"threadId": thread_id, "turn": {"id": "turn-1", "status": "completed"}},
+            )
+        return TurnRef(thread_id, "turn-1")
+
+    async def steer_turn(
+        self,
+        thread_id: str,
+        turn_id: str,
+        prompt: str,
+        **_: object,
+    ) -> TurnRef:
+        self.steered_turns.append((thread_id, turn_id, prompt))
+        return TurnRef(thread_id, turn_id)
+
+    async def interrupt_turn(self, thread_id: str, turn_id: str) -> None:
+        self.interrupted_turns.append((thread_id, turn_id))
+
+    async def close(self) -> None:
+        return None
+
+    async def emit(self, method: str, params: JsonObject) -> None:
+        notification = AppServerNotification(method, params)
+        for handler in tuple(self.handlers):
+            await handler(notification)
+
+
+def _runtime(tmp_path: Path, client: FakeAppServerClient) -> CodexAppServerRuntime:
+    return CodexAppServerRuntime(
+        cast(CodexAppServerClient, client),
+        ChannelSessionStore(tmp_path / "sessions.json"),
+        turn_timeout_seconds=2,
+    )
+
+
+@pytest.mark.asyncio
+async def test_fast_turn_notifications_are_replayed_after_registration(tmp_path: Path) -> None:
+    client = FakeAppServerClient()
+    client.complete_during_start = True
+    runtime = _runtime(tmp_path, client)
+
+    result = await runtime.run(channel_id=123, prompt="fast", cwd=tmp_path)
+
+    assert result.message == "fast result"
+
+
+async def _wait_active(client: FakeAppServerClient) -> None:
+    await client.turn_started.wait()
+    await asyncio.sleep(0)
+
+
+async def _complete(client: FakeAppServerClient, thread_id: str, text: str) -> None:
+    await client.emit(
+        "item/completed",
+        {
+            "threadId": thread_id,
+            "turnId": "turn-1",
+            "item": {"type": "agentMessage", "phase": "final_answer", "text": text},
+        },
+    )
+    await client.emit(
+        "turn/completed",
+        {"threadId": thread_id, "turn": {"id": "turn-1", "status": "completed"}},
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_streams_progress_and_returns_final_answer(tmp_path: Path) -> None:
+    client = FakeAppServerClient()
+    runtime = _runtime(tmp_path, client)
+    progress: list[str] = []
+
+    async def capture(update: object) -> None:
+        progress.append(str(getattr(update, "now", None)))
+
+    task = asyncio.create_task(
+        runtime.run(channel_id=123, prompt="hello", cwd=tmp_path, on_progress=capture)
+    )
+    await _wait_active(client)
+    await client.emit(
+        "item/completed",
+        {
+            "threadId": "thread-1",
+            "turnId": "turn-1",
+            "item": {"type": "agentMessage", "phase": "final_answer", "text": "done"},
+        },
+    )
+    await client.emit(
+        "thread/tokenUsage/updated",
+        {
+            "threadId": "thread-1",
+            "turnId": "turn-1",
+            "tokenUsage": {
+                "last": {
+                    "inputTokens": 10,
+                    "cachedInputTokens": 2,
+                    "outputTokens": 3,
+                    "reasoningOutputTokens": 1,
+                }
+            },
+        },
+    )
+    await client.emit(
+        "turn/completed",
+        {"threadId": "thread-1", "turn": {"id": "turn-1", "status": "completed"}},
+    )
+
+    result = await task
+
+    assert result.message == "done"
+    assert result.usage.total_tokens == 13
+    assert ChannelSessionStore(tmp_path / "sessions.json").get(123) == "thread-1"
+    assert client.started_threads == [tmp_path]
+    assert len(client.started_turns) == 1
+    assert progress == []
+
+
+@pytest.mark.asyncio
+async def test_followup_steers_the_same_active_turn(tmp_path: Path) -> None:
+    client = FakeAppServerClient()
+    runtime = _runtime(tmp_path, client)
+    task = asyncio.create_task(runtime.run(channel_id=123, prompt="first", cwd=tmp_path))
+    await _wait_active(client)
+
+    result = await runtime.steer(channel_id=123, prompt="new direction")
+
+    assert result is SteerResult.STEERED
+    assert client.steered_turns == [("thread-1", "turn-1", "new direction")]
+    assert len(client.started_turns) == 1
+    await client.emit(
+        "item/completed",
+        {
+            "threadId": "thread-1",
+            "turnId": "turn-1",
+            "item": {"type": "agentMessage", "phase": "final_answer", "text": "steered"},
+        },
+    )
+    await client.emit(
+        "turn/completed",
+        {"threadId": "thread-1", "turn": {"id": "turn-1", "status": "completed"}},
+    )
+    assert (await task).message == "steered"
+
+
+@pytest.mark.asyncio
+async def test_interrupt_uses_active_turn_and_resolves_run(tmp_path: Path) -> None:
+    client = FakeAppServerClient()
+    runtime = _runtime(tmp_path, client)
+    task = asyncio.create_task(runtime.run(channel_id=123, prompt="first", cwd=tmp_path))
+    await _wait_active(client)
+
+    assert await runtime.interrupt(123)
+    assert client.interrupted_turns == [("thread-1", "turn-1")]
+    await client.emit(
+        "turn/completed",
+        {"threadId": "thread-1", "turn": {"id": "turn-1", "status": "interrupted"}},
+    )
+    with pytest.raises(AgentTurnInterrupted):
+        await task
+
+
+@pytest.mark.asyncio
+async def test_existing_channel_thread_is_resumed(tmp_path: Path) -> None:
+    client = FakeAppServerClient()
+    store = ChannelSessionStore(tmp_path / "sessions.json")
+    store.set(123, "stored-thread")
+    runtime = CodexAppServerRuntime(cast(CodexAppServerClient, client), store)
+    task = asyncio.create_task(runtime.run(channel_id=123, prompt="again", cwd=tmp_path))
+    await _wait_active(client)
+
+    assert client.resumed_threads == ["stored-thread"]
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert client.interrupted_turns == [("stored-thread", "turn-1")]
+
+
+@pytest.mark.asyncio
+async def test_different_channels_run_concurrently(tmp_path: Path) -> None:
+    client = FakeAppServerClient()
+    runtime = _runtime(tmp_path, client)
+    first = asyncio.create_task(runtime.run(channel_id=101, prompt="one", cwd=tmp_path))
+    second = asyncio.create_task(runtime.run(channel_id=202, prompt="two", cwd=tmp_path))
+    for _ in range(100):
+        if len(client.started_turns) == 2:
+            break
+        await asyncio.sleep(0.01)
+
+    assert len(client.started_turns) == 2
+    await _complete(client, "thread-1", "one done")
+    await _complete(client, "thread-2", "two done")
+
+    assert (await first).message == "one done"
+    assert (await second).message == "two done"
+
+
+@pytest.mark.asyncio
+async def test_server_exit_fails_active_turn_immediately(tmp_path: Path) -> None:
+    client = FakeAppServerClient()
+    runtime = _runtime(tmp_path, client)
+    task = asyncio.create_task(runtime.run(channel_id=123, prompt="one", cwd=tmp_path))
+    await _wait_active(client)
+
+    await client.emit("app-server/exited", {"message": "process exited"})
+
+    with pytest.raises(RuntimeError, match="process exited"):
+        await task

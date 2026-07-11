@@ -4,7 +4,6 @@ from pathlib import Path
 import pytest
 
 from study_discord_agent.agent import AgentGateway
-from study_discord_agent.session_store import ChannelSessionStore
 from study_discord_agent.usage_store import ChannelUsageStore, default_usage_store_path
 
 
@@ -31,6 +30,7 @@ async def test_codex_channel_session_uses_discord_worktree_root(tmp_path: Path) 
         command=f"{fake_codex} exec --json --cd /workspace -",
         workdir=None,
         timeout_seconds=10,
+        channel_sessions_enabled=False,
         session_store_path=str(tmp_path / "sessions.json"),
         discord_worktree_root=str(root),
         studyos_org_root=str(tmp_path / "Tue-StudyOS"),
@@ -40,98 +40,6 @@ async def test_codex_channel_session_uses_discord_worktree_root(tmp_path: Path) 
 
     assert f"--cd {root / '123'}" in reply.message
     assert (root / "123").is_dir()
-
-
-@pytest.mark.asyncio
-async def test_codex_channel_session_resumes_after_first_turn(tmp_path: Path) -> None:
-    fake_codex = tmp_path / "codex"
-    fake_codex.write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env python3",
-                "import json",
-                "import sys",
-                "session = 'stored-session'",
-                "if 'resume' in sys.argv:",
-                "    text = 'resumed:' + ('stored-session' if session in sys.argv else 'missing')",
-                "else:",
-                "    text = 'started'",
-                "print(json.dumps({'type': 'session_meta', 'payload': {'id': session}}))",
-                "print(json.dumps({'item': {'type': 'agent_message', 'text': text}}))",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    fake_codex.chmod(0o755)
-    agent = AgentGateway(
-        webhook_url=None,
-        command=f"{fake_codex} exec --json --cd /workspace -",
-        workdir=None,
-        timeout_seconds=10,
-        session_store_path=str(tmp_path / "sessions.json"),
-    )
-
-    first = await agent.ask("hello", user="student", channel_id=123, source_message_id=1)
-    second = await agent.ask("again", user="student", channel_id=123, source_message_id=2)
-
-    assert first.message == "started"
-    assert first.session_id == "stored-session"
-    assert second.message == "resumed:stored-session"
-
-
-@pytest.mark.asyncio
-async def test_codex_session_is_persisted_before_cancel_and_resume(tmp_path: Path) -> None:
-    fake_codex = tmp_path / "codex"
-    fake_codex.write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env python3",
-                "import json",
-                "import sys",
-                "import time",
-                "sys.stdin.read()",
-                "session = 'session-early'",
-                "if 'resume' in sys.argv:",
-                "    text = 'resumed:' + ('session-early' if session in sys.argv else 'missing')",
-                "    print(json.dumps({'type': 'session_meta', "
-                "'payload': {'id': session}}), flush=True)",
-                "    print(json.dumps({'item': {'type': 'agent_message', "
-                "'text': text}}), flush=True)",
-                "else:",
-                "    print(json.dumps({'type': 'session_meta', "
-                "'payload': {'id': session}}), flush=True)",
-                "    time.sleep(60)",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    fake_codex.chmod(0o755)
-    session_path = tmp_path / "sessions.json"
-    agent = AgentGateway(
-        webhook_url=None,
-        command=f"{fake_codex} exec --json --cd /workspace -",
-        workdir=None,
-        timeout_seconds=10,
-        session_store_path=str(session_path),
-    )
-
-    first = asyncio.create_task(
-        agent.ask("hello", user="student", channel_id=123, source_message_id=1)
-    )
-    store = ChannelSessionStore(session_path)
-    for _ in range(100):
-        if store.get(123) == "session-early":
-            break
-        await asyncio.sleep(0.01)
-    assert store.get(123) == "session-early"
-
-    first.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await first
-
-    second = await agent.ask("again", user="student", channel_id=123, source_message_id=2)
-
-    assert second.message == "resumed:session-early"
 
 
 @pytest.mark.asyncio
@@ -161,6 +69,7 @@ async def test_codex_channel_sessions_run_different_channels_in_parallel(tmp_pat
         command=f"{fake_codex} exec --json --cd /workspace -",
         workdir=None,
         timeout_seconds=10,
+        channel_sessions_enabled=False,
         session_store_path=str(tmp_path / "sessions.json"),
     )
 
@@ -203,6 +112,7 @@ async def test_codex_usage_is_recorded_by_channel(tmp_path: Path) -> None:
         command=f"{fake_codex} exec --json -",
         workdir=None,
         timeout_seconds=10,
+        channel_sessions_enabled=False,
         usage_store_path=str(usage_path),
     )
 
@@ -240,7 +150,15 @@ async def test_positional_codex_home_controls_default_usage_store(tmp_path: Path
     )
     fake_codex.chmod(0o755)
     codex_home = tmp_path / "codex-home"
-    agent = AgentGateway(None, f"{fake_codex} exec --json -", None, 10, True, None, str(codex_home))
+    agent = AgentGateway(
+        None,
+        f"{fake_codex} exec --json -",
+        None,
+        10,
+        False,
+        None,
+        str(codex_home),
+    )
 
     await agent.ask("hello", user="student", channel_id=456, source_message_id=1)
 

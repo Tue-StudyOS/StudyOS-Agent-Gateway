@@ -48,7 +48,8 @@ def test_ensure_global_agents_creates_codex_home_guidance(tmp_path: Path) -> Non
     assert "share URLs\nin Discord or GitHub" in text
     assert "Discord thread IDs are channel IDs" in text
     assert "Match the response language" in text
-    assert "edit that same message" in text
+    assert "renders lifecycle and tool progress automatically" in text
+    assert "Do not create a separate progress message" in text
     assert "$CODEX_HOME/memories/studyos-course.md" in text
     assert "do not route student credentials" in text
     assert "do not silently reject or skip" in text
@@ -130,7 +131,8 @@ def test_build_agent_prompt_points_to_memory(tmp_path: Path) -> None:
     assert "send to the current Discord channel id above" in prompt
     assert "Discord thread ids are channel ids" in prompt
     assert "Match the response language" in prompt
-    assert "edit that same message" in prompt
+    assert "renders lifecycle and tool progress automatically" in prompt
+    assert "Do not create a separate progress message" in prompt
     assert "Always attach files" in prompt
     assert "local paths are not usable in Discord" in prompt
     assert "Never print or commit the token" in prompt
