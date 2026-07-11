@@ -164,9 +164,9 @@ def _render_plan(plan: tuple[AgentPlanStep, ...]) -> list[str]:
     lines: list[str] = []
     if start:
         lines.append(f"-# … {start} earlier step{'s' if start != 1 else ''}")
-    icons = {"completed": "✅", "inProgress": "🔄", "pending": "⬜"}
+    markers = {"completed": "`[x]`", "inProgress": "`[-]`", "pending": "`[ ]`"}
     for item in visible:
-        lines.append(f"{icons.get(item.status, '⬜')} {item.step}")
+        lines.append(f"{markers.get(item.status, '`[ ]`')} {item.step}")
     remaining = len(plan) - start - len(visible)
     if remaining:
         lines.append(f"-# … {remaining} later step{'s' if remaining != 1 else ''}")

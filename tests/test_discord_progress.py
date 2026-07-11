@@ -161,9 +161,9 @@ async def test_structured_plan_renders_as_bounded_checklist() -> None:
 
     assert source.status is not None
     rendered = _rendered(source.status.view)
-    assert "✅ Inspect the gateway" in rendered
-    assert "🔄 Build the progress card" in rendered
-    assert "⬜ Deploy to the Jetson" in rendered
+    assert "`[x]` Inspect the gateway" in rendered
+    assert "`[-]` Build the progress card" in rendered
+    assert "`[ ]` Deploy to the Jetson" in rendered
     assert "Now: Running focused tests" in rendered
 
 
