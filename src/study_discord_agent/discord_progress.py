@@ -5,8 +5,9 @@ from dataclasses import dataclass
 
 import discord
 
-from study_discord_agent.agent_progress import AgentProgress
+from study_discord_agent.agent_progress import AgentPlanStep, AgentProgress
 from study_discord_agent.discord_markdown import discord_safe_markdown
+from study_discord_agent.discord_progress_view import DiscordProgressView, StopHandler
 
 logger = logging.getLogger(__name__)
 
@@ -16,16 +17,19 @@ class _ProgressState:
     now: str = "Starting the task"
     completed: str | None = None
     next_step: str | None = None
+    plan: tuple[AgentPlanStep, ...] | None = None
 
 
 class DiscordProgressMessage:
     def __init__(
         self,
         message: discord.Message,
+        view: DiscordProgressView,
         started_at: int,
         min_edit_interval_seconds: float = 5.0,
     ) -> None:
         self._message = message
+        self._view = view
         self._started_at = started_at
         self._min_edit_interval = min_edit_interval_seconds
         self._state = _ProgressState()
@@ -38,12 +42,18 @@ class DiscordProgressMessage:
     async def create(
         cls,
         source: discord.Message,
+        on_stop: StopHandler,
         min_edit_interval_seconds: float = 5.0,
     ) -> "DiscordProgressMessage":
         started_at = int(time.time())
-        content = _render(_ProgressState(), started_at)
-        message = await source.reply(content)
-        return cls(message, started_at, min_edit_interval_seconds)
+        state = _ProgressState()
+        view = DiscordProgressView(_render(state, started_at), source.author.id, on_stop)
+        message = await source.reply(
+            view=view,
+            mention_author=False,
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+        return cls(message, view, started_at, min_edit_interval_seconds)
 
     async def update(self, progress: AgentProgress) -> None:
         async with self._lock:
@@ -55,6 +65,8 @@ class DiscordProgressMessage:
                 self._state.completed = progress.completed
             if progress.next_step:
                 self._state.next_step = progress.next_step
+            if progress.plan is not None:
+                self._state.plan = progress.plan
             self._schedule_flush_locked()
 
     async def note_steering(self) -> None:
@@ -72,11 +84,14 @@ class DiscordProgressMessage:
             self._cancel_flush_locked()
             self._closed = True
             try:
-                await self._message.edit(
-                    content=(
-                        "❌ **Agent failed**\nThe task could not be completed. Details were logged."
-                    )
+                self._view.mark_failed(
+                    "❌ **Agent failed**\nThe task couldn't be completed. Details were logged."
                 )
+                await self._message.edit(
+                    view=self._view,
+                    allowed_mentions=discord.AllowedMentions.none(),
+                )
+                self._view.close()
             except discord.HTTPException as exc:
                 logger.warning("failed to update Discord progress error state: %s", exc)
 
@@ -86,6 +101,7 @@ class DiscordProgressMessage:
                 return
             self._cancel_flush_locked()
             self._closed = True
+            self._view.close()
             await self._message.delete()
 
     def _schedule_flush_locked(self) -> None:
@@ -107,7 +123,11 @@ class DiscordProgressMessage:
             if self._closed:
                 return
             try:
-                await self._message.edit(content=_render(self._state, self._started_at))
+                self._view.update_content(_render(self._state, self._started_at))
+                await self._message.edit(
+                    view=self._view,
+                    allowed_mentions=discord.AllowedMentions.none(),
+                )
                 self._last_edit_at = time.monotonic()
             except discord.NotFound:
                 self._closed = True
@@ -121,9 +141,33 @@ class DiscordProgressMessage:
 
 
 def _render(state: _ProgressState, started_at: int) -> str:
-    lines = [f"⏳ **Working** · started <t:{started_at}:R>", f"**Now:** {state.now}"]
+    lines = [f"⏳ **Working** · started <t:{started_at}:R>"]
+    if state.plan:
+        lines.extend(("", "**Plan**", *_render_plan(state.plan)))
+    lines.extend(("", f"-# Now: {state.now}"))
+    if state.plan:
+        return discord_safe_markdown("\n".join(lines))[:3900]
     if state.completed:
         lines.append(f"**Completed:** {state.completed}")
     if state.next_step:
         lines.append(f"**Next:** {state.next_step}")
-    return discord_safe_markdown("\n".join(lines))[:1900]
+    return discord_safe_markdown("\n".join(lines))[:3900]
+
+
+def _render_plan(plan: tuple[AgentPlanStep, ...]) -> list[str]:
+    current = next(
+        (index for index, item in enumerate(plan) if item.status == "inProgress"),
+        len(plan) - 1,
+    )
+    start = max(0, min(current - 2, len(plan) - 6))
+    visible = plan[start : start + 6]
+    lines: list[str] = []
+    if start:
+        lines.append(f"-# … {start} earlier step{'s' if start != 1 else ''}")
+    icons = {"completed": "✅", "inProgress": "🔄", "pending": "⬜"}
+    for item in visible:
+        lines.append(f"{icons.get(item.status, '⬜')} {item.step}")
+    remaining = len(plan) - start - len(visible)
+    if remaining:
+        lines.append(f"-# … {remaining} later step{'s' if remaining != 1 else ''}")
+    return lines

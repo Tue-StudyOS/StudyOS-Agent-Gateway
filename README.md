@@ -19,7 +19,8 @@ The Python service receives Discord mentions and optional GitHub webhooks, then 
 
 ## Features
 
-- Mention-first Discord collaboration: tag the bot to brainstorm, ask technical questions, research, or start a scoped task.
+- Mention-first Discord collaboration: tag the bot to start a scoped task, then send
+  unmentioned follow-ups while that exact task is active.
 - FastAPI webhook endpoint for GitHub `pull_request`, `issues`, and `issue_comment` events.
 - HMAC verification for GitHub webhook payloads.
 - Configurable Discord channel for PR and issue notifications.
@@ -122,10 +123,18 @@ an active turn uses `turn/steer` with the exact active turn ID instead of
 cancelling the work or starting a second response. A stop request uses
 `turn/interrupt`. Different channels can run concurrently.
 
-Each Discord task creates one temporary progress reply. App-server lifecycle,
-plan, command, file, tool, and safe commentary events edit that same message.
-The gateway sends the final response first and then removes the progress reply,
+Each Discord task creates one temporary native progress card. App-server lifecycle,
+structured plan, command, file, tool, and safe commentary events edit that same
+message. Longer tasks display the current Codex plan as a bounded checklist and
+provide a requester-only **Stop task** button. Discord delivers button clicks over
+the bot's existing Gateway connection, so the Jetson does not need a public callback
+port. The gateway sends the final response first and then removes the progress card,
 so normal operation leaves only the final answer in the channel.
+
+While a task is active, the person who started it can steer it with an ordinary
+message in the same Discord channel or thread. Unmentioned messages never start or
+resume an idle task, and another user's ambient messages are ignored. A fresh task
+still requires mentioning the bot.
 
 For Discord-originated Codex sessions, `AGENT_DISCORD_WORKTREE_ROOT` gives each
 originating channel or thread a persistent working root such as

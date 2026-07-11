@@ -147,15 +147,20 @@ turn/steer(threadId, expectedTurnId, input)
 ```
 
 This keeps the follow-up in the active model turn and prevents a second response
-handler. Stop requests use `turn/interrupt`. Different channels can run in
-parallel. GitHub poller and webhook-triggered runs continue to use the configured
-one-shot command path.
+handler. The initiating user can also steer with an unmentioned message while that
+exact channel task remains active. An unmentioned message cannot wake an idle
+session, start a later turn, or steer another user's task. Stop requests use
+`turn/interrupt`. Different channels can run in parallel. GitHub poller and
+webhook-triggered runs continue to use the configured one-shot command path.
 
-The gateway also creates one editable Discord progress reply for each active
-turn. It renders only allowlisted lifecycle and high-level activity data; raw
-commands, outputs, diffs, tool arguments, web queries, and reasoning are never
-copied into Discord. After the final reply succeeds, the progress message is
-deleted. On failure, that same message becomes the visible error state.
+The gateway also creates one editable Discord Components V2 progress card for each
+active turn. It mirrors structured `turn/plan/updated` steps as a bounded checklist
+and renders only allowlisted lifecycle and high-level activity data; raw commands,
+outputs, diffs, tool arguments, web queries, and reasoning are never copied into
+Discord. Its requester-only **Stop task** button arrives through the bot's existing
+outbound Discord Gateway connection and does not require an inbound HTTP port. After
+the final reply succeeds, the progress card is deleted. On failure, that same card
+becomes the visible error state.
 
 For Discord-originated Codex sessions, `AGENT_DISCORD_WORKTREE_ROOT` gives each
 originating channel or thread a persistent working root such as

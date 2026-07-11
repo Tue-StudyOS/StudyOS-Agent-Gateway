@@ -28,6 +28,7 @@ MAX_SEEN_MESSAGE_IDS = 2048
 @dataclass
 class _ActiveMention:
     task: asyncio.Task[None]
+    owner_id: int
     progress: DiscordProgressMessage | None = None
 
 
@@ -45,42 +46,71 @@ class DiscordMentionCoordinator:
         message: discord.Message,
         prompt: str,
         origin_context: DiscordOriginContext,
-    ) -> None:
+        *,
+        start_if_idle: bool = True,
+    ) -> bool:
         channel_id = message.channel.id
         async with self._lock:
             if message.id in self._seen_ids:
                 logger.info("duplicate discord mention ignored message_id=%s", message.id)
-                return
+                return False
             self._remember(message.id)
             active = self._active.get(channel_id)
             if active and active.task.done():
                 self._active.pop(channel_id, None)
                 active = None
 
+        if not start_if_idle and (
+            active is None or active.owner_id != message.author.id
+        ):
+            return False
+        expected_followup_task = active.task if not start_if_idle and active else None
+
         if is_cancel_prompt(prompt):
-            interrupted = await self._agent.interrupt(channel_id) if active else False
-            if active and not interrupted and not active.task.done():
-                active.task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await active.task
-                interrupted = True
+            interrupted = await self.stop(channel_id)
             response = (
                 "Stopped the active task in this channel."
                 if interrupted
                 else "No active task is running in this channel."
             )
             await message.reply(response)
-            return
+            return True
 
         while True:
             active = await self._current_active(channel_id)
+            if not start_if_idle and (
+                active is None or active.task is not expected_followup_task
+            ):
+                return False
             if active:
                 if await self._steer(active, message, prompt, origin_context):
-                    return
+                    return True
                 await active.task
                 continue
+            if not start_if_idle:
+                return False
             if await self._start(message, prompt, origin_context):
-                return
+                return True
+
+    async def stop(
+        self,
+        channel_id: int,
+        *,
+        expected_task: asyncio.Task[None] | None = None,
+    ) -> bool:
+        active = await self._current_active(channel_id)
+        if active is None or (expected_task is not None and active.task is not expected_task):
+            return False
+        interrupted = await self._agent.interrupt(channel_id)
+        if not interrupted and not active.task.done():
+            current = await self._current_active(channel_id)
+            if current is None or current.task is not active.task:
+                return False
+            active.task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await active.task
+            interrupted = True
+        return interrupted
 
     async def _start(
         self,
@@ -94,7 +124,7 @@ class DiscordMentionCoordinator:
             if existing and not existing.task.done():
                 return False
             task = asyncio.create_task(self._run(message, prompt, origin_context))
-            active = _ActiveMention(task=task)
+            active = _ActiveMention(task=task, owner_id=message.author.id)
             self._active[channel_id] = active
             task.add_done_callback(lambda done: asyncio.create_task(self._forget(channel_id, done)))
             return True
@@ -147,7 +177,16 @@ class DiscordMentionCoordinator:
     ) -> None:
         progress: DiscordProgressMessage | None = None
         try:
-            progress = await DiscordProgressMessage.create(message)
+            current_task = asyncio.current_task()
+            if current_task is None:
+                raise RuntimeError("Discord task has no active asyncio task")
+            progress = await DiscordProgressMessage.create(
+                message,
+                on_stop=lambda: self.stop(
+                    message.channel.id,
+                    expected_task=current_task,
+                ),
+            )
             await self._set_progress(message.channel.id, progress)
             attachments = await save_message_attachments(
                 message,

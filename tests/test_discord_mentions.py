@@ -53,13 +53,21 @@ class FakeAgent:
 
 
 class FakeSentMessage:
-    def __init__(self, content: str | None) -> None:
+    def __init__(self, content: str | None, view: object | None = None) -> None:
         self.content = content
         self.edits: list[str | None] = []
+        self.view = view
         self.deleted = False
 
-    async def edit(self, *, content: str | None = None, **_: object) -> None:
+    async def edit(
+        self,
+        *,
+        content: str | None = None,
+        view: object | None = None,
+        **_: object,
+    ) -> None:
         self.content = content
+        self.view = view
         self.edits.append(content)
 
     async def delete(self) -> None:
@@ -72,11 +80,12 @@ class FakeMessage:
         message_id: int,
         channel_id: int = 123,
         *,
+        author_id: int = 42,
         fail_file_upload: bool = False,
     ) -> None:
         self.id = message_id
         self.channel = type("Channel", (), {"id": channel_id})()
-        self.author = FakeAuthor()
+        self.author = FakeAuthor(author_id)
         self.attachments: list[object] = []
         self.sent: list[FakeSentMessage] = []
         self.reply_calls: list[dict[str, object]] = []
@@ -86,7 +95,7 @@ class FakeMessage:
         self.reply_calls.append(kwargs)
         if self.fail_file_upload and kwargs.get("files"):
             raise RuntimeError("upload failed")
-        sent = FakeSentMessage(content)
+        sent = FakeSentMessage(content, kwargs.get("view"))
         self.sent.append(sent)
         return sent
 
@@ -108,8 +117,20 @@ def _origin(channel_id: int = 123) -> DiscordOriginContext:
 
 
 class FakeAuthor:
+    def __init__(self, user_id: int) -> None:
+        self.id = user_id
+
     def __str__(self) -> str:
         return "student"
+
+
+def _rendered(view: object | None) -> str:
+    assert isinstance(view, discord.ui.LayoutView)
+    return "\n".join(
+        child.content
+        for child in view.walk_children()
+        if isinstance(child, discord.ui.TextDisplay)
+    )
 
 
 async def _wait_until(predicate: Any) -> None:
@@ -129,8 +150,7 @@ async def test_initial_status_is_deleted_after_final_reply() -> None:
     await coordinator.dispatch(cast(Any, message), "hello", _origin())
     await _wait_until(lambda: len(message.sent) == 2)
 
-    assert message.sent[0].content is not None
-    assert "Working" in message.sent[0].content
+    assert "Working" in _rendered(message.sent[0].view)
     assert message.sent[0].deleted
     assert message.sent[1].content == "done"
 
@@ -161,7 +181,7 @@ async def test_generated_attachment_is_cleaned_when_upload_fails(tmp_path: Path)
     await coordinator.dispatch(cast(Any, message), "show code", _origin())
     await _wait_until(lambda: bool(message.sent and message.sent[0].edits))
 
-    assert "Agent failed" in str(message.sent[0].content)
+    assert "Agent failed" in _rendered(message.sent[0].view)
     assert not (tmp_path / "discord-replies/reply-1.md").exists()
 
 
@@ -184,6 +204,53 @@ async def test_same_channel_followup_steers_without_second_handler() -> None:
     agent.release.set()
     await _wait_until(lambda: len(first.sent) == 2)
     assert first.sent[1].content == "done"
+
+
+@pytest.mark.asyncio
+async def test_unmentioned_owner_followup_only_steers_while_active() -> None:
+    agent = FakeAgent()
+    agent.block = True
+    coordinator = _coordinator(agent)
+    first = FakeMessage(1)
+    followup = FakeMessage(2)
+
+    await coordinator.dispatch(cast(Any, first), "slow first", _origin())
+    await agent.started.wait()
+    handled = await coordinator.dispatch(
+        cast(Any, followup),
+        "small correction",
+        _origin(),
+        start_if_idle=False,
+    )
+
+    assert handled
+    assert len(agent.calls) == 1
+    assert len(agent.steers) == 1
+    agent.release.set()
+
+
+@pytest.mark.asyncio
+async def test_unmentioned_idle_or_other_user_message_is_ignored() -> None:
+    agent = FakeAgent()
+    coordinator = _coordinator(agent)
+    idle = FakeMessage(1)
+
+    assert not await coordinator.dispatch(
+        cast(Any, idle), "ambient chat", _origin(), start_if_idle=False
+    )
+    assert agent.calls == []
+
+    agent.block = True
+    owner = FakeMessage(2)
+    other_user = FakeMessage(3, author_id=99)
+    await coordinator.dispatch(cast(Any, owner), "slow task", _origin())
+    await agent.started.wait()
+
+    assert not await coordinator.dispatch(
+        cast(Any, other_user), "unrelated chat", _origin(), start_if_idle=False
+    )
+    assert agent.steers == []
+    agent.release.set()
 
 
 @pytest.mark.asyncio

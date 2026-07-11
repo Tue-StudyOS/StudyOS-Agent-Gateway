@@ -11,7 +11,7 @@ requires-python = ">=3.12"
 license = "MIT"
 authors = [{ name = "Sebastian Boehler" }]
 dependencies = [
-  "discord.py>=2.5,<3",
+  "discord.py>=2.6,<3",
   "fastapi>=0.115,<1",
   "httpx>=0.28,<1",
   "pydantic-settings>=2.7,<3",

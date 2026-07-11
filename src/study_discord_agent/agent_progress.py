@@ -3,15 +3,24 @@ from typing import Any, cast
 
 
 @dataclass(frozen=True)
+class AgentPlanStep:
+    step: str
+    status: str
+
+
+@dataclass(frozen=True)
 class AgentProgress:
     now: str | None = None
     completed: str | None = None
     next_step: str | None = None
+    plan: tuple[AgentPlanStep, ...] | None = None
 
 
 def progress_from_notification(method: str, params: dict[str, object]) -> AgentProgress | None:
     if method == "turn/started":
         return AgentProgress(now="Understanding the request and planning the work")
+    if method == "turn/plan/updated":
+        return _plan_progress(params)
     if method not in {"item/started", "item/completed"}:
         return None
 
@@ -26,6 +35,28 @@ def progress_from_notification(method: str, params: dict[str, object]) -> AgentP
     if method == "item/started":
         return _started_progress(item_type, item)
     return _completed_progress(item_type, item)
+
+
+def _plan_progress(params: dict[str, object]) -> AgentProgress | None:
+    plan_obj = params.get("plan")
+    if not isinstance(plan_obj, list):
+        return None
+    steps: list[AgentPlanStep] = []
+    for value in cast(list[object], plan_obj):
+        if not isinstance(value, dict):
+            continue
+        plan_step = cast(dict[str, object], value)
+        step = plan_step.get("step")
+        status = plan_step.get("status")
+        if (
+            isinstance(step, str)
+            and step.strip()
+            and isinstance(status, str)
+            and status in {"pending", "inProgress", "completed"}
+        ):
+            label = " ".join(step.split())[:180]
+            steps.append(AgentPlanStep(step=label, status=status))
+    return AgentProgress(plan=tuple(steps)) if steps else None
 
 
 def _started_progress(item_type: str, item: dict[str, Any]) -> AgentProgress | None:

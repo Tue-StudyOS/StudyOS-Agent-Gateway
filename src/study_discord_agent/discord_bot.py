@@ -114,22 +114,35 @@ class StudyBot(commands.Bot):
             return
         if message.author.bot:
             return
-        if self.user is None or self.user not in message.mentions:
+        if self.user is None:
             return
 
-        prompt = message.clean_content.replace(f"@{self.user.display_name}", "").strip()
+        mentioned = self.user in message.mentions
+        prompt = (
+            message.clean_content.replace(f"@{self.user.display_name}", "").strip()
+            if mentioned
+            else message.clean_content.strip()
+        )
+        if not prompt:
+            if mentioned:
+                await message.reply("Send a question or task after mentioning me.")
+            return
+        origin_context = origin_context_from_message(message)
+        handled = await self._mentions.dispatch(
+            message,
+            prompt,
+            origin_context,
+            start_if_idle=mentioned,
+        )
+        if not handled:
+            return
         logger.info(
-            "discord mention received author=%s channel_id=%s message_id=%s",
+            "discord message handled author=%s channel_id=%s message_id=%s mentioned=%s",
             message.author,
             message.channel.id,
             message.id,
+            mentioned,
         )
-        if not prompt:
-            await message.reply("Send a question or task after mentioning me.")
-            return
-
-        origin_context = origin_context_from_message(message)
-        await self._mentions.dispatch(message, prompt, origin_context)
 
 
 def _discord_text(message: str) -> str:
