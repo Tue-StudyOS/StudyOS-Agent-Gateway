@@ -88,7 +88,8 @@ The bot-side poller is still useful when the output needs to be posted to Discor
 
 ### App Server
 
-For a deeper integration, use `codex app-server` instead of spawning `codex exec` for every event.
+The Discord channel-session path now uses `codex app-server` instead of spawning
+`codex exec` for every turn.
 
 Why it matters:
 
@@ -99,16 +100,16 @@ Why it matters:
 - Bounded queues and overload signaling.
 - Separate threads for Discord channels, PRs, issues, or scheduled jobs.
 
-This is the right direction once the simple `AGENT_COMMAND` path proves useful.
+The configured `AGENT_COMMAND` remains the compatibility and policy surface;
+the gateway derives the app-server launch and thread settings from it.
 
 ## Proposed Evolution
 
-1. Current: one local command runner per event.
-2. Add job records: persist job id, source, source id, prompt, status, output, and Codex session id.
-3. Add per-source queues: serialize work per Discord channel or PR, but allow different channels/PRs to run in parallel.
-4. Parse `codex exec --json`: stream progress events into Discord threads.
-5. Add Codex hooks: block unsafe commands and post high-signal status.
-6. Move to `codex app-server`: keep long-lived threads and approvals instead of short-lived subprocesses.
+1. Current: persistent app-server threads for Discord channel sessions, including
+   progress, steering, interruption, and concurrent channels.
+2. Add durable job records for restart-visible status and recovery.
+3. Surface app-server approval requests through explicit Discord controls.
+4. Add Codex hooks for policy enforcement and validation, not UI transport.
 
 ## Safety Baseline
 

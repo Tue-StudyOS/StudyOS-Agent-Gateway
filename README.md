@@ -114,11 +114,17 @@ studyos-discord-context --channel-id 123 --around-message-id 456 --limit 20
 ```
 
 When `AGENT_CHANNEL_SESSIONS_ENABLED=true`, Discord mentions handled by a Codex
-`AGENT_COMMAND` store a mapping from Discord channel ID to Codex session ID under
-`$CODEX_HOME/gateway/discord-channel-sessions.json`. Follow-up mentions in the
-same channel resume the same Codex session. Different channels can run in
-parallel; mentions in the same channel are serialized to avoid racing one Codex
-conversation.
+`AGENT_COMMAND` run through one persistent `codex app-server` process and store a
+mapping from Discord channel ID to Codex thread ID under
+`$CODEX_HOME/gateway/discord-channel-sessions.json`. A follow-up mention during
+an active turn uses `turn/steer` with the exact active turn ID instead of
+cancelling the work or starting a second response. A stop request uses
+`turn/interrupt`. Different channels can run concurrently.
+
+Each Discord task creates one temporary progress reply. App-server lifecycle,
+plan, command, file, tool, and safe commentary events edit that same message.
+The gateway sends the final response first and then removes the progress reply,
+so normal operation leaves only the final answer in the channel.
 
 For Discord-originated Codex sessions, `AGENT_DISCORD_WORKTREE_ROOT` gives each
 originating channel or thread a persistent working root such as
@@ -136,8 +142,8 @@ Codex is instructed to use them for independent subtasks; otherwise it should
 continue locally and say that subagents are unavailable.
 
 Discord attachments on a mention are downloaded into `DISCORD_ATTACHMENT_DIR`.
-Image attachments are passed to Codex CLI through `-i` in addition to being
-listed in the prompt. When an agent creates a file that should be posted back to
+Image attachments are passed to app-server as `localImage` inputs in addition
+to being listed in the prompt. When an agent creates a file that should be posted back to
 Discord, it returns a final JSON object:
 
 ```json

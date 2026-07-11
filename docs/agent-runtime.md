@@ -124,24 +124,31 @@ until behavior is trusted in a real course server.
 ## Channel Sessions
 
 When `AGENT_CHANNEL_SESSIONS_ENABLED=true` and `AGENT_COMMAND` is a Codex
-`exec` command, the gateway keeps one persisted Codex session per Discord
-channel. The first mention runs the configured command. The gateway extracts the
-Codex `session_meta.payload.id` from JSONL output and stores it in:
+`exec` command, the gateway launches one persistent `codex app-server` process
+over stdio and keeps one persisted Codex thread per Discord channel. The thread
+ID is stored in:
 
 ```text
 $CODEX_HOME/gateway/discord-channel-sessions.json
 ```
 
-Later mentions in the same Discord channel run:
+The first turn uses `thread/start`; a stored thread uses `thread/resume`. While
+a turn remains active, later mentions in the same channel run:
 
-```bash
-codex exec resume --json <session-id> -
+```text
+turn/steer(threadId, expectedTurnId, input)
 ```
 
-The gateway keeps a per-channel async lock, so two users in the same channel do
-not resume the same Codex session at the same time. Different channels can run
-in parallel. GitHub poller and webhook-triggered runs do not use Discord channel
-sessions.
+This keeps the follow-up in the active model turn and prevents a second response
+handler. Stop requests use `turn/interrupt`. Different channels can run in
+parallel. GitHub poller and webhook-triggered runs continue to use the configured
+one-shot command path.
+
+The gateway also creates one editable Discord progress reply for each active
+turn. It renders only allowlisted lifecycle and high-level activity data; raw
+commands, outputs, diffs, tool arguments, web queries, and reasoning are never
+copied into Discord. After the final reply succeeds, the progress message is
+deleted. On failure, that same message becomes the visible error state.
 
 For Discord-originated Codex sessions, `AGENT_DISCORD_WORKTREE_ROOT` gives each
 originating channel or thread a persistent working root such as
