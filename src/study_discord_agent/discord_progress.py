@@ -10,6 +10,7 @@ from study_discord_agent.discord_markdown import discord_safe_markdown
 from study_discord_agent.discord_progress_view import DiscordProgressView, StopHandler
 
 logger = logging.getLogger(__name__)
+SPINNER_FRAMES = ("-", "\\", "/", "|")
 
 
 @dataclass
@@ -18,6 +19,7 @@ class _ProgressState:
     completed: str | None = None
     next_step: str | None = None
     plan: tuple[AgentPlanStep, ...] | None = None
+    spinner_frame: int = 0
 
 
 class DiscordProgressMessage:
@@ -26,7 +28,8 @@ class DiscordProgressMessage:
         message: discord.Message,
         view: DiscordProgressView,
         started_at: int,
-        min_edit_interval_seconds: float = 5.0,
+        min_edit_interval_seconds: float = 2.0,
+        animation_interval_seconds: float = 2.0,
     ) -> None:
         self._message = message
         self._view = view
@@ -35,6 +38,8 @@ class DiscordProgressMessage:
         self._state = _ProgressState()
         self._last_edit_at = 0.0
         self._flush_task: asyncio.Task[None] | None = None
+        self._animation_interval = animation_interval_seconds
+        self._animation_task: asyncio.Task[None] | None = None
         self._closed = False
         self._lock = asyncio.Lock()
 
@@ -43,7 +48,8 @@ class DiscordProgressMessage:
         cls,
         source: discord.Message,
         on_stop: StopHandler,
-        min_edit_interval_seconds: float = 5.0,
+        min_edit_interval_seconds: float = 2.0,
+        animation_interval_seconds: float = 2.0,
     ) -> "DiscordProgressMessage":
         started_at = int(time.time())
         state = _ProgressState()
@@ -53,7 +59,16 @@ class DiscordProgressMessage:
             mention_author=False,
             allowed_mentions=discord.AllowedMentions.none(),
         )
-        return cls(message, view, started_at, min_edit_interval_seconds)
+        progress = cls(
+            message,
+            view,
+            started_at,
+            min_edit_interval_seconds,
+            animation_interval_seconds,
+        )
+        if animation_interval_seconds > 0:
+            progress._animation_task = asyncio.create_task(progress._animate())
+        return progress
 
     async def update(self, progress: AgentProgress) -> None:
         async with self._lock:
@@ -82,6 +97,7 @@ class DiscordProgressMessage:
             if self._closed:
                 return
             self._cancel_flush_locked()
+            self._cancel_animation_locked()
             self._closed = True
             try:
                 self._view.mark_failed(
@@ -100,6 +116,7 @@ class DiscordProgressMessage:
             if self._closed:
                 return
             self._cancel_flush_locked()
+            self._cancel_animation_locked()
             self._closed = True
             self._view.close()
             await self._message.delete()
@@ -131,19 +148,40 @@ class DiscordProgressMessage:
                 self._last_edit_at = time.monotonic()
             except discord.NotFound:
                 self._closed = True
+                self._cancel_animation_locked()
             except discord.HTTPException as exc:
                 logger.warning("failed to edit Discord progress message: %s", exc)
+
+    async def _animate(self) -> None:
+        while True:
+            await asyncio.sleep(self._animation_interval)
+            async with self._lock:
+                if self._closed:
+                    return
+                if not self._state.plan or not any(
+                    item.status == "inProgress" for item in self._state.plan
+                ):
+                    continue
+                self._state.spinner_frame = (
+                    self._state.spinner_frame + 1
+                ) % len(SPINNER_FRAMES)
+                self._schedule_flush_locked()
 
     def _cancel_flush_locked(self) -> None:
         if self._flush_task and not self._flush_task.done():
             self._flush_task.cancel()
         self._flush_task = None
 
+    def _cancel_animation_locked(self) -> None:
+        if self._animation_task and not self._animation_task.done():
+            self._animation_task.cancel()
+        self._animation_task = None
+
 
 def _render(state: _ProgressState, started_at: int) -> str:
     lines = [f"⏳ **Working** · started <t:{started_at}:R>"]
     if state.plan:
-        lines.extend(("", "**Plan**", *_render_plan(state.plan)))
+        lines.extend(("", "**Plan**", *_render_plan(state.plan, state.spinner_frame)))
     lines.extend(("", f"-# Now: {state.now}"))
     if state.plan:
         return discord_safe_markdown("\n".join(lines))[:3900]
@@ -154,7 +192,7 @@ def _render(state: _ProgressState, started_at: int) -> str:
     return discord_safe_markdown("\n".join(lines))[:3900]
 
 
-def _render_plan(plan: tuple[AgentPlanStep, ...]) -> list[str]:
+def _render_plan(plan: tuple[AgentPlanStep, ...], spinner_frame: int) -> list[str]:
     current = next(
         (index for index, item in enumerate(plan) if item.status == "inProgress"),
         len(plan) - 1,
@@ -164,7 +202,11 @@ def _render_plan(plan: tuple[AgentPlanStep, ...]) -> list[str]:
     lines: list[str] = []
     if start:
         lines.append(f"-# … {start} earlier step{'s' if start != 1 else ''}")
-    markers = {"completed": "`[x]`", "inProgress": "`[-]`", "pending": "`[ ]`"}
+    markers = {
+        "completed": "`[x]`",
+        "inProgress": f"`[{SPINNER_FRAMES[spinner_frame % len(SPINNER_FRAMES)]}]`",
+        "pending": "`[ ]`",
+    }
     for item in visible:
         lines.append(f"{markers.get(item.status, '`[ ]`')} {item.step}")
     remaining = len(plan) - start - len(visible)

@@ -13,6 +13,7 @@ class FakeStatusMessage:
         self.content = content
         self.view = view
         self.edits: list[object | None] = []
+        self.rendered_edits: list[str] = []
         self.deleted = False
 
     async def edit(
@@ -25,6 +26,7 @@ class FakeStatusMessage:
         self.content = content
         self.view = view
         self.edits.append(view)
+        self.rendered_edits.append(_rendered(view))
 
     async def delete(self) -> None:
         self.deleted = True
@@ -100,7 +102,10 @@ class FakeInteraction:
 async def test_progress_updates_coalesce_into_latest_edit() -> None:
     source = FakeSourceMessage()
     progress = await DiscordProgressMessage.create(
-        cast(Any, source), _stop, min_edit_interval_seconds=0.05
+        cast(Any, source),
+        _stop,
+        min_edit_interval_seconds=0.05,
+        animation_interval_seconds=0,
     )
 
     await progress.update(AgentProgress(now="Running tests", completed="Updated one file"))
@@ -118,7 +123,9 @@ async def test_progress_updates_coalesce_into_latest_edit() -> None:
 @pytest.mark.asyncio
 async def test_delete_stops_future_edits() -> None:
     source = FakeSourceMessage()
-    progress = await DiscordProgressMessage.create(cast(Any, source), _stop, 0)
+    progress = await DiscordProgressMessage.create(
+        cast(Any, source), _stop, 0, animation_interval_seconds=0
+    )
 
     await progress.delete()
     await progress.update(AgentProgress(now="Must not render"))
@@ -132,7 +139,9 @@ async def test_delete_stops_future_edits() -> None:
 @pytest.mark.asyncio
 async def test_failure_reuses_status_message() -> None:
     source = FakeSourceMessage()
-    progress = await DiscordProgressMessage.create(cast(Any, source), _stop, 0)
+    progress = await DiscordProgressMessage.create(
+        cast(Any, source), _stop, 0, animation_interval_seconds=0
+    )
 
     await progress.fail()
 
@@ -145,7 +154,9 @@ async def test_failure_reuses_status_message() -> None:
 @pytest.mark.asyncio
 async def test_structured_plan_renders_as_bounded_checklist() -> None:
     source = FakeSourceMessage()
-    progress = await DiscordProgressMessage.create(cast(Any, source), _stop, 0)
+    progress = await DiscordProgressMessage.create(
+        cast(Any, source), _stop, 0, animation_interval_seconds=0
+    )
 
     await progress.update(
         AgentProgress(
@@ -168,6 +179,36 @@ async def test_structured_plan_renders_as_bounded_checklist() -> None:
 
 
 @pytest.mark.asyncio
+async def test_active_plan_step_cycles_through_ascii_spinner() -> None:
+    source = FakeSourceMessage()
+    progress = await DiscordProgressMessage.create(
+        cast(Any, source),
+        _stop,
+        min_edit_interval_seconds=0,
+        animation_interval_seconds=0.01,
+    )
+
+    await progress.update(
+        AgentProgress(
+            plan=(AgentPlanStep("Build the progress card", "inProgress"),)
+        )
+    )
+    await asyncio.sleep(0.045)
+    await progress.delete()
+
+    assert source.status is not None
+    spinner_markers = [
+        next(
+            marker
+            for marker in ("`[-]`", "`[\\]`", "`[/]`", "`[|]`")
+            if marker in rendered
+        )
+        for rendered in source.status.rendered_edits
+    ]
+    assert spinner_markers[:5] == ["`[-]`", "`[\\]`", "`[/]`", "`[|]`", "`[-]`"]
+
+
+@pytest.mark.asyncio
 async def test_stop_button_acknowledges_and_invokes_callback_once() -> None:
     calls = 0
 
@@ -177,7 +218,9 @@ async def test_stop_button_acknowledges_and_invokes_callback_once() -> None:
         return True
 
     source = FakeSourceMessage()
-    await DiscordProgressMessage.create(cast(Any, source), stop, 0)
+    await DiscordProgressMessage.create(
+        cast(Any, source), stop, 0, animation_interval_seconds=0
+    )
     assert source.status is not None
     button = _stop_button(source.status.view)
     first = FakeInteraction(42)
@@ -203,7 +246,9 @@ async def test_stop_button_rejects_other_users() -> None:
         return True
 
     source = FakeSourceMessage()
-    await DiscordProgressMessage.create(cast(Any, source), stop, 0)
+    await DiscordProgressMessage.create(
+        cast(Any, source), stop, 0, animation_interval_seconds=0
+    )
     assert source.status is not None
     interaction = FakeInteraction(99)
 
