@@ -106,6 +106,10 @@ against `DISCORD_ARTIFACT_ALLOWED_ROOTS` before upload. Start proactive
 Discord participation with `DISCORD_PROACTIVE_DRY_RUN=true`; only set it to
 `false` after testing in a low-risk server.
 
+Normal Discord answers are intentionally short. Long Markdown, fenced code,
+logs, and structured write-ups are uploaded as attachments instead of being
+pasted into the channel.
+
 For Claude Code, run it directly on the host or build a sibling image with the Claude CLI installed:
 
 ```bash

@@ -106,6 +106,12 @@ The gateway validates generated files before sending them. By default only
 `/tmp/studyos-artifacts`, `/workspaces`, and legacy `/workspace` are uploadable
 roots. This keeps auth volumes and logs from being posted accidentally.
 
+Discord itself stays conversational: normal replies should be one to three
+short sentences. If the final response contains fenced code, a Markdown
+document, more than 12 lines, or more than 900 characters, the gateway writes
+the full response to a Markdown artifact and sends only a short caption plus
+the attachment.
+
 For simple architecture or workflow diagrams, the agent image includes
 Graphviz and the helper CLI:
 
@@ -113,13 +119,14 @@ Graphviz and the helper CLI:
 studyos-render-diagram --input /tmp/studyos-artifacts/flow.dot --output /tmp/studyos-artifacts/flow.png
 ```
 
-The proactive Discord monitor is disabled by default. When enabled, it scans
-visible Discord message channels on an interval and asks the agent whether one
-short reply is useful. Channels are skipped unless their latest human message is
-recent according to `DISCORD_PROACTIVE_RECENT_ACTIVITY_SECONDS`. After sending,
-the monitor waits at least `DISCORD_PROACTIVE_MIN_POST_INTERVAL_SECONDS` before
-posting proactively in the same channel again. Keep `DISCORD_PROACTIVE_DRY_RUN=true`
-until behavior is trusted in a real course server.
+The proactive Discord monitor is disabled by default. When enabled, it only
+considers private `group-*` channels and their threads. A deterministic gate
+requires a settled, unanswered technical blocker; recent bot activity, ordinary
+conversation, summaries, cheerleading, and generic next-step suggestions are
+silenced before the agent can post. The agent must then return a strict JSON
+decision, and any post is limited to 500 characters and four lines with no code
+block. Keep `DISCORD_PROACTIVE_DRY_RUN=true` until behavior is trusted in a real
+course server.
 
 ## Channel Sessions
 

@@ -30,7 +30,8 @@ The Python service receives Discord mentions and optional GitHub webhooks, then 
 - Discord attachment handoff: uploaded files are saved locally and image attachments are passed to Codex with `-i` when possible.
 - Discord artifact uploads: agents can return generated diagrams, images, or documents for the bot to post back into the channel.
 - `studyos-render-diagram` helper for rendering Graphviz DOT diagrams to PNG/SVG/PDF inside the agent image.
-- Disabled-by-default proactive channel monitor scaffold for deployments that want opt-in discussion nudges.
+- Disabled-by-default, high-signal proactive monitor for private `group-*` spaces; it stays silent unless a settled technical blocker has a concrete answer.
+- Short Discord-native replies, with long Markdown, fenced code, logs, and structured write-ups moved into attachments automatically.
 - Optional PR review summaries and issue refinement prompts on GitHub webhook events.
 - Periodic GitHub triage loop for open PRs and issues.
 - Seeded Codex app automations for triage, review nudges, issue refinement, implementation candidate discovery, a coordinator heartbeat, and a weekly digest.
@@ -152,7 +153,9 @@ Discord, it returns a final JSON object:
 
 The gateway also detects local file links like
 `[slides.pdf](/workspace/output/slides.pdf)` in plain agent replies and uploads
-those files in the same Discord response. Local paths are not useful to Discord
+those files in the same Discord response. Oversized replies, Markdown documents,
+and fenced code are also moved into a `.md` attachment automatically, leaving
+only a short caption in chat. Local paths are not useful to Discord
 users, so file requests should produce attachments by default. The gateway only
 uploads files under `DISCORD_ARTIFACT_ALLOWED_ROOTS`, with
 `/tmp/studyos-artifacts`, `/workspaces`, and legacy `/workspace` allowed by
@@ -188,7 +191,7 @@ docker compose -f docker-compose.agent.yml exec studyos-agent-gateway codex logi
 | `DISCORD_ATTACHMENT_DIR` | Local directory for Discord message attachments |
 | `DISCORD_ARTIFACT_ALLOWED_ROOTS` | Comma-separated roots the bot may upload files from |
 | `DISCORD_ARTIFACT_MAX_BYTES` | Maximum generated file size for Discord upload |
-| `DISCORD_PROACTIVE_AGENT_ENABLED` | Enables the opt-in proactive monitor across visible Discord channels |
+| `DISCORD_PROACTIVE_AGENT_ENABLED` | Enables the opt-in high-signal monitor for private `group-*` channels and their threads |
 | `DISCORD_PROACTIVE_INTERVAL_SECONDS` | Proactive monitor interval |
 | `DISCORD_PROACTIVE_RECENT_ACTIVITY_SECONDS` | Maximum age of latest human message before a channel is skipped |
 | `DISCORD_PROACTIVE_MIN_POST_INTERVAL_SECONDS` | Per-channel cooldown after the bot sends a proactive reply |
