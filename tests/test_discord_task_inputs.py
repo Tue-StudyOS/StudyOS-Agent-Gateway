@@ -5,15 +5,35 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from discord_task_input_fakes import FakeAttachment, FakeMessage
+from discord_task_input_fakes import (
+    FakeAttachment,
+    FakeAttachmentDownloader,
+    FakeMessage,
+)
 
 from study_discord_agent import discord_staging_files
 from study_discord_agent.agent_errors import AgentWorkspaceOrAttachmentError
 from study_discord_agent.discord_task_inputs import (
     MAX_DISCORD_INPUT_ATTACHMENT_BYTES,
     StagedDiscordAttachments,
-    stage_message_attachments,
 )
+from study_discord_agent.discord_task_inputs import (
+    stage_message_attachments as stage_real_message_attachments,
+)
+
+
+async def stage_message_attachments(
+    message: Any,
+    root: Path,
+    *,
+    trigger_event_id: int,
+) -> StagedDiscordAttachments:
+    return await stage_real_message_attachments(
+        message,
+        root,
+        trigger_event_id=trigger_event_id,
+        downloader=FakeAttachmentDownloader(),
+    )
 
 
 @pytest.mark.asyncio
@@ -90,8 +110,32 @@ async def test_actual_oversize_removes_private_stage(tmp_path: Path) -> None:
         )
 
     assert attachment.save_calls == 1
+    assert attachment.written_bytes == MAX_DISCORD_INPUT_ATTACHMENT_BYTES
+    assert attachment.written_bytes < len(attachment.payload)
     assert root.exists()
     assert list(root.iterdir()) == []
+
+
+@pytest.mark.asyncio
+async def test_non_discord_cdn_url_is_rejected_before_root_or_download(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "attachments"
+    attachment = FakeAttachment(
+        "private.txt",
+        b"private",
+        url="https://example.com/attachments/1/2/private.txt",
+    )
+
+    with pytest.raises(AgentWorkspaceOrAttachmentError, match="URL is invalid"):
+        await stage_message_attachments(
+            cast(Any, FakeMessage(99, [attachment])),
+            root,
+            trigger_event_id=42,
+        )
+
+    assert attachment.save_calls == 0
+    assert not root.exists()
 
 
 @pytest.mark.asyncio

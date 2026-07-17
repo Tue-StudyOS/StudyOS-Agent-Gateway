@@ -5,11 +5,34 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from discord_task_input_fakes import FakeAttachment, FakeMessage
+from discord_task_input_fakes import (
+    FakeAttachment,
+    FakeAttachmentDownloader,
+    FakeMessage,
+)
 
 from study_discord_agent import discord_staging_files
 from study_discord_agent.agent_errors import AgentWorkspaceOrAttachmentError
-from study_discord_agent.discord_task_inputs import stage_message_attachments
+from study_discord_agent.discord_task_inputs import (
+    StagedDiscordAttachments,
+)
+from study_discord_agent.discord_task_inputs import (
+    stage_message_attachments as stage_real_message_attachments,
+)
+
+
+async def stage_message_attachments(
+    message: Any,
+    root: Path,
+    *,
+    trigger_event_id: int,
+) -> StagedDiscordAttachments:
+    return await stage_real_message_attachments(
+        message,
+        root,
+        trigger_event_id=trigger_event_id,
+        downloader=FakeAttachmentDownloader(),
+    )
 
 
 class StagingAbort(BaseException):

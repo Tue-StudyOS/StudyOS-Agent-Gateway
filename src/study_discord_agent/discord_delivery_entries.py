@@ -13,7 +13,10 @@ from study_discord_agent.discord_delivery_resources import (
 )
 from study_discord_agent.discord_file_descriptors import DeliveryFileError, absolute_path
 from study_discord_agent.discord_generated_file import GeneratedFileOwnership
-from study_discord_agent.discord_reply_content import PreparedDiscordReply
+from study_discord_agent.discord_reply_content import (
+    MAX_DISCORD_ATTACHMENTS,
+    PreparedDiscordReply,
+)
 
 
 class DiscordDeliveryCacheError(RuntimeError):
@@ -38,6 +41,27 @@ class TransferredReply:
     lease: DiscordDeliveryLease
     allowed_roots: tuple[Path, ...]
     max_bytes: int
+
+
+def validate_cache_put(
+    task_id: str,
+    reply: PreparedDiscordReply,
+    closed: bool,
+    cached: dict[str, CachedReply],
+    transferred: dict[int, TransferredReply],
+) -> None:
+    if closed:
+        raise DiscordDeliveryCacheError("Discord delivery cache is closed")
+    if task_id in cached:
+        raise DiscordDeliveryCacheError("Discord task reply is already cached")
+    if any(item.task_id == task_id for item in transferred.values()):
+        raise DiscordDeliveryCacheError("Discord task reply is already in flight")
+    if not task_id:
+        raise DiscordDeliveryCacheError("Discord delivery cache task ID is invalid")
+    if len(reply.files) > MAX_DISCORD_ATTACHMENTS:
+        raise DiscordDeliveryCacheError("Discord delivery replies accept at most 10 files")
+    if reply.delivery_lease is not None:
+        raise DiscordDeliveryCacheError("Discord delivery reply already has an active lease")
 
 
 def generated_index(reply: PreparedDiscordReply) -> int | None:

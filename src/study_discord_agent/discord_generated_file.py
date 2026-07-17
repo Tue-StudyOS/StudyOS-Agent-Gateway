@@ -1,3 +1,10 @@
+"""Generated-file ownership within the trusted gateway-EUID boundary.
+
+Parent directories exclude group/other writers. POSIX name removal cannot be made
+inode-conditional, so malicious filesystem mutation by the same gateway EUID is outside
+this module's security model. Cleanup is descriptor-relative and never recursive.
+"""
+
 from __future__ import annotations
 
 import os
@@ -48,6 +55,7 @@ class GeneratedCandidate:
     def quarantine(self) -> GeneratedFileOwnership:
         directory_name = _create_quarantine_directory(self.parent_fd)
         directory_fd = -1
+        directory_identity: Identity = (-1, -1)
         moved = False
         try:
             directory_fd, created = open_directory(directory_name, dir_fd=self.parent_fd)
@@ -84,18 +92,51 @@ class GeneratedCandidate:
             self.file_fd = -1
             self.closed = True
             return ownership
-        except BaseException:
+        except BaseException as exc:
             if moved and directory_fd >= 0:
-                _restore_quarantined_file(
+                pending = self._transfer_ownership(
+                    directory_name,
                     directory_fd,
-                    self.parent_fd,
-                    self.original_path.name,
+                    directory_identity,
                 )
+                if _restore_quarantined_file(
+                    directory_fd,
+                    pending.parent_fd,
+                    self.original_path.name,
+                ):
+                    try:
+                        pending.cleanup()
+                    except BaseException:
+                        raise GeneratedCleanupPending(pending, exc) from exc
+                    raise
+                raise GeneratedCleanupPending(pending, exc) from exc
             close_if_open(directory_fd)
             with suppress(OSError):
                 os.rmdir(directory_name, dir_fd=self.parent_fd)
             self.close()
             raise
+
+    def _transfer_ownership(
+        self,
+        directory_name: str,
+        directory_fd: int,
+        directory_identity: Identity,
+    ) -> GeneratedFileOwnership:
+        ownership = GeneratedFileOwnership(
+            original_path=self.original_path,
+            parent_path=self.parent_path,
+            parent_fd=self.parent_fd,
+            file_fd=self.file_fd,
+            directory_name=directory_name,
+            directory_fd=directory_fd,
+            directory_identity=directory_identity,
+            parent_identity=self.parent_identity,
+            file_identity=self.file_identity,
+        )
+        self.parent_fd = -1
+        self.file_fd = -1
+        self.closed = True
+        return ownership
 
     def close(self) -> None:
         if self.closed:
@@ -164,6 +205,19 @@ class GeneratedFileOwnership:
             self.closed = True
 
 
+class GeneratedCleanupPending(BaseException):
+    """Carries descriptor ownership when quarantine rollback cannot finish."""
+
+    def __init__(
+        self,
+        ownership: GeneratedFileOwnership,
+        original: BaseException,
+    ) -> None:
+        super().__init__("Generated Discord reply cleanup is pending")
+        self.ownership = ownership
+        self.original = original
+
+
 def open_generated_candidate(path: Path) -> GeneratedCandidate:
     original_path = absolute_path(path)
     parent_path = original_path.parent
@@ -195,6 +249,7 @@ def open_generated_candidate(path: Path) -> GeneratedCandidate:
 
 
 def _validate_owned_parent(status: os.stat_result) -> None:
+    # The gateway EUID is the TCB boundary; group/other mutation must be impossible.
     mode = stat.S_IMODE(status.st_mode)
     owner_access = stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR
     if (
@@ -220,7 +275,7 @@ def _restore_quarantined_file(
     directory_fd: int,
     parent_fd: int,
     original_name: str,
-) -> None:
+) -> bool:
     try:
         os.link(
             _QUARANTINE_FILE,
@@ -230,6 +285,9 @@ def _restore_quarantined_file(
             follow_symlinks=False,
         )
     except OSError:
-        return
-    with suppress(OSError):
+        return False
+    try:
         os.unlink(_QUARANTINE_FILE, dir_fd=directory_fd)
+    except OSError:
+        return False
+    return True

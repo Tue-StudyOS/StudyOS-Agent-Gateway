@@ -11,6 +11,10 @@ Identity = tuple[int, int]
 class DeliveryFileError(RuntimeError):
     """A reply file failed safe descriptor validation."""
 
+    def __init__(self, public_message: str) -> None:
+        super().__init__(public_message)
+        self.public_message = public_message
+
 
 def absolute_path(path: Path) -> Path:
     return Path(os.path.abspath(os.fspath(path.expanduser())))

@@ -13,7 +13,12 @@ class DiscordDeliveryLeaseError(RuntimeError):
 
 @dataclass(frozen=True)
 class PinnedDiscordFile:
-    """An immutable delivery snapshot; callers must not reopen ``source_path``."""
+    """An immutable snapshot; never reopen ``source_path`` or close ``stream``.
+
+    Each send attempt must create and then close a fresh ``discord.File`` wrapper from
+    ``stream`` and ``filename``. The wrapper is non-owning; only the lease closes the
+    pinned stream, and cache restoration rewinds it before a later attempt.
+    """
 
     source_path: Path
     filename: str

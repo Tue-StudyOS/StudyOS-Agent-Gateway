@@ -1,3 +1,10 @@
+"""Descriptor-owned staging within the trusted gateway-EUID boundary.
+
+POSIX cannot unlink a name conditionally by inode. The owning gateway EUID is therefore
+part of the TCB; malicious mutation by another process with that same EUID is out of
+scope. Group/other writers are rejected and cleanup never follows entries recursively.
+"""
+
 from __future__ import annotations
 
 import os
@@ -55,7 +62,52 @@ class StagingOwnership:
         self.closed = True
 
 
-def create_staging_ownership(root: Path, trigger_event_id: int) -> StagingOwnership:
+class StagingCleanupRegistry:
+    """Strongly retains descriptor ownership until deferred cleanup succeeds."""
+
+    def __init__(self) -> None:
+        self._owners: dict[int, StagingOwnership] = {}
+        self._lock = threading.Lock()
+
+    @property
+    def pending_count(self) -> int:
+        with self._lock:
+            return len(self._owners)
+
+    def register(self, ownership: StagingOwnership) -> None:
+        with self._lock:
+            self._owners[id(ownership)] = ownership
+
+    def retry_all(self) -> None:
+        with self._lock:
+            owners = tuple(self._owners.values())
+        first_error: BaseException | None = None
+        for ownership in owners:
+            try:
+                ownership.cleanup()
+            except BaseException as exc:
+                first_error = first_error or exc
+            else:
+                with self._lock:
+                    if self._owners.get(id(ownership)) is ownership:
+                        self._owners.pop(id(ownership))
+        if first_error is not None:
+            raise first_error
+
+    def close(self) -> None:
+        """Retry every pending owner, retaining failures for another close call."""
+        self.retry_all()
+
+
+DEFAULT_STAGING_CLEANUPS = StagingCleanupRegistry()
+
+
+def create_staging_ownership(
+    root: Path,
+    trigger_event_id: int,
+    *,
+    cleanup_registry: StagingCleanupRegistry = DEFAULT_STAGING_CLEANUPS,
+) -> StagingOwnership:
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     root_fd, root_status = _open_directory(root)
     try:
@@ -94,7 +146,8 @@ def create_staging_ownership(root: Path, trigger_event_id: int) -> StagingOwners
                 try:
                     temporary.cleanup()
                 except BaseException:
-                    _close_descriptors(directory_fd, root_fd)
+                    cleanup_registry.register(temporary)
+                    root_fd = -1
             else:
                 try:
                     os.rmdir(directory_name, dir_fd=root_fd)
@@ -107,6 +160,7 @@ def create_staging_ownership(root: Path, trigger_event_id: int) -> StagingOwners
 
 
 def _validate_root(status: os.stat_result) -> None:
+    # The gateway EUID is the TCB boundary; group/other mutation must be impossible.
     mode = stat.S_IMODE(status.st_mode)
     owner_access = stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR
     if (
@@ -163,11 +217,6 @@ def _open_directory(
 
 def _no_follow_flags() -> int:
     return getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
-
-
-def _close_descriptors(*file_descriptors: int) -> None:
-    for file_descriptor in file_descriptors:
-        _close_if_open(file_descriptor)
 
 
 def _close_if_open(file_descriptor: int) -> None:
