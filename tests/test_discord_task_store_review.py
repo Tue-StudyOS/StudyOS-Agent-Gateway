@@ -217,3 +217,20 @@ def test_post_replace_directory_fsync_updates_memory_before_raising(
     assert store.get(_record().task_id).revision == 1
     with pytest.raises(TaskRevisionConflict):
         store.compare_and_set(_record().task_id, 0, lambda record: record)
+
+
+def test_reconcile_treats_legacy_delivering_result_as_completed(tmp_path: Path) -> None:
+    store = DiscordTaskStore(tmp_path / "discord-tasks.json", clock=lambda: NOW)
+    delivered = replace(
+        _record(state=DiscordTaskState.DELIVERING),
+        result_message_id=42,
+    )
+    store.create(delivered)
+
+    changed = store.reconcile_startup(NOW)
+
+    assert len(changed) == 1
+    completed = changed[0]
+    assert completed.state is DiscordTaskState.COMPLETED
+    assert completed.result_message_id == 42
+    assert completed.failure is None

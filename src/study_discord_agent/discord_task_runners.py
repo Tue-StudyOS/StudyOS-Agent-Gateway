@@ -21,6 +21,11 @@ class DiscordTaskRunners:
         self._all.add(runner)
         runner.add_done_callback(lambda done: self._done(task_id, done))
 
+    async def wait_idle(self, task_id: str) -> None:
+        runner = self._current.get(task_id)
+        if runner is not None:
+            await asyncio.gather(runner, return_exceptions=True)
+
     async def close(self) -> None:
         runners = tuple(self._all)
         for runner in runners:

@@ -20,6 +20,7 @@ from study_discord_agent.discord_task_inputs import StagedDiscordAttachments
 from study_discord_agent.discord_task_model import (
     DiscordTaskFailure,
     DiscordTaskRecord,
+    DiscordTaskSourceKind,
     DiscordTaskState,
     transition,
 )
@@ -40,6 +41,7 @@ class AgentRunSpec:
     origin_context: DiscordOriginContext | None
     recovering: bool = False
     create_card: bool = False
+    require_existing_session: bool = False
 
     @classmethod
     def from_request(cls, request: DiscordTaskRequest) -> "AgentRunSpec":
@@ -49,6 +51,9 @@ class AgentRunSpec:
             attachments=request.attachments,
             origin_context=request.origin_context,
             create_card=True,
+            require_existing_session=(
+                request.source_kind is DiscordTaskSourceKind.CONTINUATION
+            ),
         )
 
 
@@ -71,6 +76,9 @@ class DiscordTaskRuntime:
 
     def spawn_agent(self, task_id: str, spec: AgentRunSpec) -> None:
         self._runners.spawn(task_id, self._agent_runner(task_id, spec))
+
+    async def wait_idle(self, task_id: str) -> None:
+        await self._runners.wait_idle(task_id)
 
     def consume_delivery(self, task_id: str) -> PreparedDiscordReply | None:
         return self._delivery.consume(task_id)
@@ -127,6 +135,7 @@ class DiscordTaskRuntime:
                 execution=AgentExecutionContext(
                     channel_id=running.execution_channel_id,
                     trigger_event_id=running.trigger_event_id,
+                    require_existing_session=spec.require_existing_session,
                 ),
             )
             await self._prepare_delivery(task_id, reply)
@@ -207,8 +216,16 @@ class DiscordTaskRuntime:
         except Exception:
             await self._delivery_failed(task_id, False)
             return
-        with_result = self._set_message_id(task_id, "result_message_id", result_id)
-        completed = self._transition(with_result, DiscordTaskState.COMPLETED)
+        current = self._store.get(task_id)
+        completed = persist_update(
+            self._store,
+            current,
+            lambda record: transition(
+                replace(record, result_message_id=result_id),
+                DiscordTaskState.COMPLETED,
+                self._now(),
+            ),
+        )
         await self.render(completed)
 
     async def _delivery_failed(self, task_id: str, definitive: bool) -> None:

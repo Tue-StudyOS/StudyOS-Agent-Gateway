@@ -16,7 +16,11 @@ from study_discord_agent.discord_task_model import (
     can_transition,
     claim_interruption,
 )
-from study_discord_agent.discord_task_persistence import TaskStoreDurabilityError, write_document
+from study_discord_agent.discord_task_persistence import (
+    TaskStoreDurabilityError,
+    confirm_document_durability,
+    write_document,
+)
 from study_discord_agent.discord_task_serialization import decode_document, encode_document
 from study_discord_agent.discord_task_store_mutations import forget_inactive_task
 from study_discord_agent.discord_task_store_policy import (
@@ -178,7 +182,7 @@ class DiscordTaskStore:
             self._write(retained)
         except TaskStoreDurabilityError:
             self._tasks = retained
-            raise
+            confirm_document_durability(self._path)
         else:
             self._tasks = retained
 
@@ -250,6 +254,10 @@ def _reconcile(record: DiscordTaskRecord, timestamp: str) -> DiscordTaskRecord:
             claim_interruption(record, DiscordTaskInterruptionCause.GATEWAY_RESTART),
             state=DiscordTaskState.INTERRUPTED,
             updated_at=timestamp,
+        )
+    if record.state is DiscordTaskState.DELIVERING and record.result_message_id is not None:
+        return replace(
+            record, state=DiscordTaskState.COMPLETED, updated_at=timestamp, failure=None
         )
     if record.state is DiscordTaskState.DELIVERING:
         return replace(

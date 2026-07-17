@@ -93,6 +93,7 @@ class DiscordTaskService:
             clock=self._clock,
         )
         self._closed = False
+        self._close_complete = False
 
     async def start(self, request: DiscordTaskRequest) -> DiscordTaskRecord:
         self._ensure_open()
@@ -196,7 +197,7 @@ class DiscordTaskService:
         return await self._reconciler.reconcile()
 
     async def close(self) -> None:
-        if self._closed:
+        if self._close_complete:
             return
         self._closed = True
         error: BaseException | None = None
@@ -210,6 +211,7 @@ class DiscordTaskService:
             error = error or caught
         if error is not None:
             raise error
+        self._close_complete = True
 
     def _by_trigger(self, trigger_event_id: int) -> DiscordTaskRecord | None:
         return next(

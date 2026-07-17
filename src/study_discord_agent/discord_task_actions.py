@@ -21,7 +21,6 @@ from study_discord_agent.discord_task_model import (
     claim_interruption,
     transition,
 )
-from study_discord_agent.discord_task_persistence import TaskStoreDurabilityError
 from study_discord_agent.discord_task_queries import DiscordTaskQueries
 from study_discord_agent.discord_task_request import (
     DiscordTaskRequest,
@@ -154,19 +153,27 @@ class DiscordTaskActions:
             return self._store.get(duplicate)
         if record.failure is None:
             raise DiscordTaskActionUnavailable("This task has no safe retry.")
+        if record.failure.retry_mode is not DiscordTaskRetryMode.RETRY_DELIVERY:
+            self._queries.validate_session_retry(record)
+        await self._runtime.wait_idle(task_id)
+        record = self._queries.status(task_id, access)
+        authorize(record, DiscordTaskAction.RETRY, access)
+        duplicate = self._interactions.existing(interaction_id)
+        if duplicate is not None:
+            return self._store.get(duplicate)
+        if record.failure is None:
+            raise DiscordTaskActionUnavailable("This task has no safe retry.")
         if record.failure.retry_mode is DiscordTaskRetryMode.RETRY_DELIVERY:
             result = await self._retry_delivery(record, interaction_id)
             return result
-        if (
-            record.failure.retry_mode is not DiscordTaskRetryMode.CONTINUE_SESSION
-            or record.state
-            not in {
-                DiscordTaskState.FAILED,
-                DiscordTaskState.TIMED_OUT,
-                DiscordTaskState.INTERRUPTED,
-            }
-        ):
-            raise DiscordTaskActionUnavailable("This task has no safe retry.")
+        self._queries.validate_session_retry(record)
+        await self._queries.require_idle_saved_session(record)
+        record = self._queries.status(task_id, access)
+        authorize(record, DiscordTaskAction.RETRY, access)
+        duplicate = self._interactions.existing(interaction_id)
+        if duplicate is not None:
+            return self._store.get(duplicate)
+        self._queries.validate_session_retry(record)
         try:
             recovering = persist_update(
                 self._store,
@@ -188,6 +195,7 @@ class DiscordTaskActions:
                 attachments=StagedDiscordAttachments(paths=(), directory=None),
                 origin_context=None,
                 recovering=True,
+                require_existing_session=True,
             ),
         )
         await self._runtime.render(recovering)
@@ -202,6 +210,13 @@ class DiscordTaskActions:
     ) -> DiscordTaskRecord:
         accepted = False
         try:
+            parent = self._queries.status(parent_id, access)
+            authorize(parent, DiscordTaskAction.CONTINUE, access)
+            duplicate = self._interactions.existing(interaction_id)
+            if duplicate is not None:
+                return self._store.get(duplicate)
+            self._queries.validate_continuation(parent, request)
+            await self._queries.require_idle_saved_session(parent)
             parent = self._queries.status(parent_id, access)
             authorize(parent, DiscordTaskAction.CONTINUE, access)
             duplicate = self._interactions.existing(interaction_id)
@@ -238,20 +253,6 @@ class DiscordTaskActions:
             raise DiscordTaskActionUnavailable("An active task cannot be forgotten.")
         try:
             neighbors = self._store.forget(task_id, record.revision)
-        except TaskStoreDurabilityError:
-            try:
-                self._store.get(task_id)
-            except KeyError:
-                neighbors = tuple(
-                    self._store.get(neighbor_id)
-                    for neighbor_id in (
-                        record.continued_from_task_id,
-                        record.continued_to_task_id,
-                    )
-                    if neighbor_id is not None
-                )
-            else:
-                raise
         except ValueError as error:
             raise DiscordTaskActionUnavailable(
                 "An active task cannot be forgotten."

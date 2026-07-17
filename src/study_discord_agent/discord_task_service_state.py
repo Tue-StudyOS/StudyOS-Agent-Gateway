@@ -1,13 +1,11 @@
 from collections import OrderedDict
 from collections.abc import Callable
-from dataclasses import replace
 from datetime import UTC, datetime
 
 from study_discord_agent.discord_task_model import (
     DiscordTaskRecord,
     DiscordTaskState,
 )
-from study_discord_agent.discord_task_persistence import TaskStoreDurabilityError
 from study_discord_agent.discord_task_request import DiscordTaskRequest
 from study_discord_agent.discord_task_store import DiscordTaskStore
 
@@ -69,11 +67,7 @@ def new_record(
 
 
 def persist_create(store: DiscordTaskStore, record: DiscordTaskRecord) -> None:
-    try:
-        store.create(record)
-    except TaskStoreDurabilityError:
-        if store.get(record.task_id) != record:
-            raise
+    store.create(record)
 
 
 def persist_update(
@@ -82,18 +76,11 @@ def persist_update(
     update: Callable[[DiscordTaskRecord], DiscordTaskRecord],
 ) -> DiscordTaskRecord:
     candidate = update(current)
-    try:
-        return store.compare_and_set(
-            current.task_id,
-            current.revision,
-            lambda _record: candidate,
-        )
-    except TaskStoreDurabilityError:
-        canonical = store.get(current.task_id)
-        expected = replace(candidate, revision=current.revision + 1)
-        if canonical != expected:
-            raise
-        return canonical
+    return store.compare_and_set(
+        current.task_id,
+        current.revision,
+        lambda _record: candidate,
+    )
 
 
 def persist_link(
@@ -101,17 +88,7 @@ def persist_link(
     parent: DiscordTaskRecord,
     child: DiscordTaskRecord,
 ) -> tuple[DiscordTaskRecord, DiscordTaskRecord]:
-    try:
-        return store.link_child(parent.task_id, parent.revision, child)
-    except TaskStoreDurabilityError:
-        canonical_parent = store.get(parent.task_id)
-        canonical_child = store.get(child.task_id)
-        if (
-            canonical_parent.continued_to_task_id != child.task_id
-            or canonical_child != child
-        ):
-            raise
-        return canonical_parent, canonical_child
+    return store.link_child(parent.task_id, parent.revision, child)
 
 
 def as_timestamp(value: datetime) -> str:

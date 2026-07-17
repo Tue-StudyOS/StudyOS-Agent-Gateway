@@ -65,10 +65,7 @@ class DiscordTaskQueries:
         return tuple(
             sorted(
                 records,
-                key=lambda record: (
-                    datetime.fromisoformat(record.created_at).astimezone(UTC),
-                    record.task_id,
-                ),
+                key=_created_order,
                 reverse=True,
             )[:10]
         )
@@ -77,22 +74,39 @@ class DiscordTaskQueries:
         self, task_id: str, access: DiscordTaskAccess
     ) -> DiscordTaskControlState:
         record = self.status(task_id, access)
-        try:
-            capabilities = await self._agent.channel_capabilities(
-                record.execution_channel_id
-            )
-        except Exception:
-            capabilities = AgentChannelCapabilities(False, False, False, False)
+        capabilities = await self._capabilities(record.execution_channel_id)
         record = self.status(task_id, access)
         return DiscordTaskControlState(
             steering=record.state is DiscordTaskState.RUNNING and capabilities.steering,
             resumable=(
                 record.failure is not None
                 and record.failure.retry_mode is DiscordTaskRetryMode.CONTINUE_SESSION
-                and capabilities.resumable
+                and _idle_saved_session(capabilities)
             ),
-            continuable=self.can_continue(record),
+            continuable=self.can_continue(record)
+            and _idle_saved_session(capabilities),
         )
+
+    async def require_idle_saved_session(self, record: DiscordTaskRecord) -> None:
+        capabilities = await self._capabilities(record.execution_channel_id)
+        if not _idle_saved_session(capabilities):
+            raise DiscordTaskActionUnavailable(
+                "The saved agent session is unavailable or still active."
+            )
+
+    @staticmethod
+    def validate_session_retry(record: DiscordTaskRecord) -> None:
+        if (
+            record.failure is None
+            or record.failure.retry_mode is not DiscordTaskRetryMode.CONTINUE_SESSION
+            or record.state
+            not in {
+                DiscordTaskState.FAILED,
+                DiscordTaskState.TIMED_OUT,
+                DiscordTaskState.INTERRUPTED,
+            }
+        ):
+            raise DiscordTaskActionUnavailable("This task has no safe retry.")
 
     def can_continue(self, record: DiscordTaskRecord) -> bool:
         latest = max(
@@ -101,7 +115,7 @@ class DiscordTaskQueries:
                 for candidate in self._store.records()
                 if candidate.execution_channel_id == record.execution_channel_id
             ),
-            key=lambda candidate: (candidate.created_at, candidate.task_id),
+            key=_created_order,
             default=None,
         )
         return (
@@ -126,6 +140,12 @@ class DiscordTaskQueries:
             raise DiscordTaskActionUnavailable(
                 "Only the latest completed task in this channel can continue."
             )
+
+    async def _capabilities(self, channel_id: int) -> AgentChannelCapabilities:
+        try:
+            return await self._agent.channel_capabilities(channel_id)
+        except Exception:
+            return AgentChannelCapabilities(False, False, False, False)
 
 
 def _visible(record: DiscordTaskRecord, access: DiscordTaskAccess) -> bool:
@@ -155,3 +175,15 @@ def _in_state(record: DiscordTaskRecord, state: str) -> bool:
         or (state == "active" and record.state in ACTIVE_STATES)
         or (state == "terminal" and record.state not in ACTIVE_STATES)
     )
+
+
+def _idle_saved_session(capabilities: AgentChannelCapabilities) -> bool:
+    return (
+        capabilities.resumable
+        and capabilities.persisted_session
+        and not capabilities.active_turn
+    )
+
+
+def _created_order(record: DiscordTaskRecord) -> tuple[datetime, str]:
+    return datetime.fromisoformat(record.created_at).astimezone(UTC), record.task_id

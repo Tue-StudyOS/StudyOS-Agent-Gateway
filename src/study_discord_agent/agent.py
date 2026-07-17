@@ -49,6 +49,7 @@ class AgentExecutionContext:
     channel_id: int
     trigger_event_id: int
     repository_full_name: str | None = None
+    require_existing_session: bool = False
 
 
 @dataclass(frozen=True)
@@ -222,6 +223,7 @@ class AgentGateway:
                 cwd=workspace.path if workspace else self._codex_cwd,
                 local_images=image_paths,
                 on_progress=on_progress,
+                require_existing_thread=execution.require_existing_session,
             )
             command_result = AgentCommandResult(
                 message=result.message,

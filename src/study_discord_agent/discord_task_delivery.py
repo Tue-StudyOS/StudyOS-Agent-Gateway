@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from pathlib import Path
 from typing import Protocol
 
@@ -7,6 +8,8 @@ from study_discord_agent.discord_delivery_cache import DiscordDeliveryCache
 from study_discord_agent.discord_delivery_resources import DiscordDeliveryLease
 from study_discord_agent.discord_reply_content import PreparedDiscordReply
 from study_discord_agent.discord_task_model import DiscordTaskRecord
+
+logger = logging.getLogger(__name__)
 
 
 class DiscordTaskDeliveryError(RuntimeError):
@@ -90,8 +93,16 @@ class DiscordTaskDelivery:
             ownership_resolved = lease.closed
             raise
         else:
-            lease.close()
-            ownership_resolved = lease.closed
+            try:
+                lease.close()
+            except BaseException:
+                logger.warning(
+                    "Discord result delivered but lease cleanup remains pending "
+                    "task_id=%s",
+                    record.task_id,
+                )
+            else:
+                ownership_resolved = lease.closed
             return result_id
         finally:
             if ownership_resolved:
@@ -110,12 +121,14 @@ class DiscordTaskDelivery:
 
     async def close(self) -> None:
         first_error: BaseException | None = None
-        for lease in tuple(self._active.values()):
+        for lease_id, lease in tuple(self._active.items()):
             try:
                 lease.close()
             except BaseException as error:
                 first_error = first_error or error
-        self._active.clear()
+            else:
+                if lease.closed and self._active.get(lease_id) is lease:
+                    self._active.pop(lease_id, None)
         try:
             await asyncio.to_thread(self._cache.close)
         except BaseException as error:

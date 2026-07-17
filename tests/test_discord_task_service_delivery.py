@@ -44,6 +44,7 @@ async def test_delivery_enters_delivering_and_uses_a_pinned_lease(tmp_path: Path
         harness.store, task.task_id, DiscordTaskState.COMPLETED
     )
     assert completed.result_message_id == 20_000
+    assert completed.revision == delivering.revision + 1
     assert sent_reply.delivery_lease.closed
     await harness.service.close()
 

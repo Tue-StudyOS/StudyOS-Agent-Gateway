@@ -10,7 +10,6 @@ from study_discord_agent.discord_task_model import (
     DiscordTaskRecord,
     DiscordTaskState,
 )
-from study_discord_agent.discord_task_persistence import TaskStoreDurabilityError
 from study_discord_agent.discord_task_runtime import DiscordTaskRuntime
 from study_discord_agent.discord_task_service_state import as_timestamp, persist_update
 from study_discord_agent.discord_task_store import DiscordTaskStore
@@ -31,15 +30,7 @@ class DiscordTaskReconciler:
         self._clock = clock
 
     async def reconcile(self) -> tuple[DiscordTaskRecord, ...]:
-        candidates = {record.task_id: record for record in self._store.records()}
-        try:
-            changed = self._store.reconcile_startup(self._clock())
-        except TaskStoreDurabilityError:
-            changed = tuple(
-                current
-                for task_id, before in candidates.items()
-                if (current := self._store.get(task_id)) != before
-            )
+        changed = self._store.reconcile_startup(self._clock())
         reconciled: list[DiscordTaskRecord] = []
         for record in changed:
             if (

@@ -87,12 +87,15 @@ class DiscordDeliveryLease:
     def _close_locked(self) -> None:
         first_error: BaseException | None = None
         if not self._streams_closed:
+            stream_error: BaseException | None = None
             for resource in self.files:
                 try:
                     resource.stream.close()
                 except BaseException as exc:
-                    first_error = first_error or exc
-            self._streams_closed = True
+                    stream_error = stream_error or exc
+            if stream_error is None:
+                self._streams_closed = True
+            first_error = stream_error
         if not self._released:
             try:
                 self._release()

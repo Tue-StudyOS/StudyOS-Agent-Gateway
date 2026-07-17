@@ -1,9 +1,11 @@
 from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
+from typing import cast
 
 import pytest
 
+from study_discord_agent.agent import AgentChannelCapabilities, AgentExecutionContext
 from study_discord_agent.discord_reply_content import PreparedDiscordReply
 from study_discord_agent.discord_task_model import (
     DiscordTaskSourceKind,
@@ -47,6 +49,7 @@ async def test_continue_links_only_latest_created_completed_task_and_rerenders_p
         await harness.service.continue_task(
             older.task_id, access(), continuation, interaction_id=900
         )
+    harness.agent.capabilities[10] = AgentChannelCapabilities(False, True, True, False)
     harness.agent.block_channel(10)
     child = await harness.service.continue_task(
         latest.task_id, access(), continuation, interaction_id=901
@@ -59,6 +62,8 @@ async def test_continue_links_only_latest_created_completed_task_and_rerenders_p
     await wait_for_state(harness.store, child.task_id, DiscordTaskState.RUNNING)
     harness.agent.ask_release[10].set()
     await wait_for_state(harness.store, child.task_id, DiscordTaskState.COMPLETED)
+    execution = cast(AgentExecutionContext, harness.agent.ask_calls[-1]["execution"])
+    assert execution.require_existing_session
     await harness.service.close()
 
 

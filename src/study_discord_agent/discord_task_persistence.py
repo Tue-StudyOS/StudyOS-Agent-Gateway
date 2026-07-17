@@ -22,17 +22,21 @@ def write_document(path: Path, document: str) -> None:
             output.flush()
             os.fsync(output.fileno())
         os.replace(temporary_path, path)
-        try:
-            _fsync_directory(path.parent)
-        except OSError as error:
-            raise TaskStoreDurabilityError(
-                "Discord task store replacement needs directory sync"
-            ) from error
+        confirm_document_durability(path)
     finally:
         if descriptor is not None:
             os.close(descriptor)
         if temporary_path.exists():
             temporary_path.unlink()
+
+
+def confirm_document_durability(path: Path) -> None:
+    try:
+        _fsync_directory(path.parent)
+    except OSError as error:
+        raise TaskStoreDurabilityError(
+            "Discord task store replacement needs directory sync"
+        ) from error
 
 
 def _fsync_directory(path: Path) -> None:

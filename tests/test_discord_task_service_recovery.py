@@ -1,10 +1,11 @@
 import asyncio
 from datetime import timedelta
 from pathlib import Path
+from typing import cast
 
 import pytest
 
-from study_discord_agent.agent import AgentChannelCapabilities
+from study_discord_agent.agent import AgentChannelCapabilities, AgentExecutionContext
 from study_discord_agent.agent_errors import AgentRuntimeDisconnected, AgentTurnTimedOut
 from study_discord_agent.discord_task_model import (
     DiscordTaskFailure,
@@ -89,6 +90,8 @@ async def test_generic_retry_claims_recovering_reuses_id_and_never_replays_promp
     assert completed.attempt == 2
     assert harness.agent.ask_calls[-1]["prompt"] == GENERIC_RESUME_PROMPT
     assert "private original prompt" not in GENERIC_RESUME_PROMPT
+    execution = cast(AgentExecutionContext, harness.agent.ask_calls[-1]["execution"])
+    assert execution.require_existing_session
     await harness.service.close()
 
 
@@ -147,6 +150,7 @@ async def test_control_resolver_is_fresh_and_continue_requires_latest_unlinked_c
     )
     for record in (older, latest, failed):
         harness.store.create(record)
+    harness.agent.capabilities[10] = AgentChannelCapabilities(False, True, True, False)
     harness.agent.capabilities[11] = AgentChannelCapabilities(False, True, True, False)
 
     old_controls = await harness.service.resolve_controls(older.task_id, access())

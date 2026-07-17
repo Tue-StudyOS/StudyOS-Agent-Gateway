@@ -21,6 +21,7 @@ from study_discord_agent.usage_store import ChannelUsageStore, default_usage_sto
 class _RuntimeCall:
     channel_id: int
     cwd: str | Path | None
+    require_existing_thread: bool
 
 
 class _FakePersistentRuntime:
@@ -36,9 +37,16 @@ class _FakePersistentRuntime:
         cwd: str | Path | None,
         local_images: tuple[Path, ...] = (),
         on_progress: object = None,
+        require_existing_thread: bool = False,
     ) -> AppServerTurnResult:
         del prompt, local_images, on_progress
-        self.calls.append(_RuntimeCall(channel_id=channel_id, cwd=cwd))
+        self.calls.append(
+            _RuntimeCall(
+                channel_id=channel_id,
+                cwd=cwd,
+                require_existing_thread=require_existing_thread,
+            )
+        )
         return AppServerTurnResult(
             message="done",
             thread_id="thread-1",
@@ -101,6 +109,7 @@ async def test_source_less_discord_execution_uses_app_server_and_worktree(
     assert reply.session_id == "thread-1"
     assert fake_runtime.calls[0].channel_id == 123
     assert Path(cast(str, fake_runtime.calls[0].cwd)).name == "123"
+    assert not fake_runtime.calls[0].require_existing_thread
     assert ChannelUsageStore(usage_path).rows()[0].channel_id == 123
 
 

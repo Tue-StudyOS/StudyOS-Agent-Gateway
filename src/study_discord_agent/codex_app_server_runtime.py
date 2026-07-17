@@ -88,6 +88,7 @@ class CodexAppServerRuntime:
         cwd: str | Path | None,
         local_images: Sequence[str | Path] = (),
         on_progress: ProgressSink | None = None,
+        require_existing_thread: bool = False,
     ) -> AppServerTurnResult:
         client = await self._start_client()
         generation = self._connection.generation
@@ -106,6 +107,7 @@ class CodexAppServerRuntime:
                 model_provider=self._model_provider,
                 approval_policy=self._approval_policy,
                 sandbox=self._sandbox,
+                require_existing=require_existing_thread,
             )
             await self._ensure_current_generation(generation)
             async with self._lock:
