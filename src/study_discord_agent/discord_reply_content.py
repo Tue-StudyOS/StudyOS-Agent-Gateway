@@ -1,8 +1,14 @@
+from __future__ import annotations
+
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from study_discord_agent.agent_errors import AgentWorkspaceOrAttachmentError
+
+if TYPE_CHECKING:
+    from study_discord_agent.discord_delivery_resources import DiscordDeliveryLease
 
 MAX_INLINE_REPLY_CHARS = 900
 MAX_INLINE_REPLY_LINES = 12
@@ -17,6 +23,11 @@ class PreparedDiscordReply:
     message: str
     files: tuple[Path, ...]
     generated_file: Path | None = None
+    delivery_lease: DiscordDeliveryLease | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
 
 
 def prepare_discord_reply(

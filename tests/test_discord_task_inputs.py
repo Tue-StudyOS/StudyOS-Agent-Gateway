@@ -5,44 +5,15 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from discord_task_input_fakes import FakeAttachment, FakeMessage
 
-from study_discord_agent import discord_task_inputs
+from study_discord_agent import discord_staging_files
 from study_discord_agent.agent_errors import AgentWorkspaceOrAttachmentError
 from study_discord_agent.discord_task_inputs import (
     MAX_DISCORD_INPUT_ATTACHMENT_BYTES,
     StagedDiscordAttachments,
     stage_message_attachments,
 )
-
-
-class FakeAttachment:
-    def __init__(
-        self,
-        filename: str,
-        payload: bytes,
-        *,
-        declared_size: int | None = None,
-        error: BaseException | None = None,
-    ) -> None:
-        self.filename = filename
-        self.size = len(payload) if declared_size is None else declared_size
-        self.payload = payload
-        self.error = error
-        self.save_calls = 0
-
-    async def save(self, destination: Any) -> int:
-        self.save_calls += 1
-        if self.error is not None:
-            raise self.error
-        if hasattr(destination, "write"):
-            return destination.write(self.payload)
-        return Path(destination).write_bytes(self.payload)
-
-
-class FakeMessage:
-    def __init__(self, message_id: int, attachments: list[FakeAttachment]) -> None:
-        self.id = message_id
-        self.attachments = attachments
 
 
 @pytest.mark.asyncio
@@ -233,10 +204,10 @@ async def test_creation_failure_removes_new_private_directory(
 ) -> None:
     root = tmp_path / "attachments"
 
-    def fail_private_mode(_path: Path, _mode: int) -> None:
+    def fail_private_mode(_file_descriptor: int, _mode: int) -> None:
         raise OSError("mode failure")
 
-    monkeypatch.setattr(discord_task_inputs.os, "chmod", fail_private_mode)
+    monkeypatch.setattr(discord_staging_files.os, "fchmod", fail_private_mode)
 
     with pytest.raises(AgentWorkspaceOrAttachmentError):
         await stage_message_attachments(

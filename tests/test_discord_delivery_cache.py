@@ -30,14 +30,25 @@ def test_consume_once_revalidates_and_transfers_generated_file(tmp_path: Path) -
     cache = DiscordDeliveryCache()
     reply = _reply(generated, artifact)
     cache.put("task-1", reply)
+    assert not generated.exists()
 
     consumed = cache.consume("task-1", (root,), max_bytes=100)
 
-    assert consumed == reply
+    assert consumed is not None
+    assert consumed.delivery_lease is not None
+    assert [resource.stream.read() for resource in consumed.delivery_lease.files] == [
+        b"artifact",
+        b"reply",
+    ]
+    assert consumed.generated_file is not None
+    assert consumed.generated_file.exists()
     assert cache.consume("task-1", (root,), max_bytes=100) is None
     cache.close()
     assert artifact.exists()
-    assert generated.exists()
+    assert consumed.generated_file.exists()
+    consumed.delivery_lease.close()
+    consumed.delivery_lease.close()
+    assert not consumed.generated_file.exists()
 
 
 def test_missing_artifact_rejects_entry_and_deletes_only_generated(
@@ -130,10 +141,11 @@ def test_generated_symlink_is_rejected_and_only_link_is_deleted(tmp_path: Path) 
     generated = root / "reply.md"
     generated.symlink_to(target)
     cache = DiscordDeliveryCache()
-    cache.put("task-1", _reply(generated))
 
-    assert cache.consume("task-1", (root,), max_bytes=100) is None
-    assert not generated.is_symlink()
+    with pytest.raises(DiscordDeliveryCacheError, match="regular file"):
+        cache.put("task-1", _reply(generated))
+
+    assert generated.is_symlink()
     assert target.read_text(encoding="utf-8") == "keep"
 
 
@@ -146,11 +158,11 @@ def test_duplicate_put_is_explicit_and_does_not_take_new_ownership(
     second.write_text("second", encoding="utf-8")
     cache = DiscordDeliveryCache()
     cache.put("task-1", _reply(first))
+    assert not first.exists()
 
     with pytest.raises(DiscordDeliveryCacheError, match="already cached"):
         cache.put("task-1", _reply(second))
 
-    assert first.exists()
     assert second.exists()
     cache.discard("task-1")
     assert not first.exists()
@@ -210,7 +222,7 @@ def test_put_rejects_generated_file_missing_from_files_without_ownership(
         generated_file=generated,
     )
 
-    with pytest.raises(DiscordDeliveryCacheError, match="included in reply files"):
+    with pytest.raises(DiscordDeliveryCacheError, match="same reply-file object"):
         cache.put("task-1", reply)
 
     cache.close()
@@ -243,9 +255,23 @@ def test_replaced_generated_path_is_not_deleted_as_owned(tmp_path: Path) -> None
     replacement_target.write_text("keep", encoding="utf-8")
     cache = DiscordDeliveryCache()
     cache.put("task-1", _reply(generated))
-    generated.unlink()
+    assert not generated.exists()
     generated.symlink_to(replacement_target)
 
-    assert cache.consume("task-1", (root,), max_bytes=100) is None
+    consumed = cache.consume("task-1", (root,), max_bytes=100)
+    assert consumed is not None
+    assert consumed.delivery_lease is not None
     assert generated.is_symlink()
     assert replacement_target.read_text(encoding="utf-8") == "keep"
+    consumed.delivery_lease.close()
+    assert generated.is_symlink()
+
+
+def test_put_rejects_missing_generated_file(tmp_path: Path) -> None:
+    generated = tmp_path / "missing.md"
+    cache = DiscordDeliveryCache()
+
+    with pytest.raises(DiscordDeliveryCacheError, match="does not exist"):
+        cache.put("task-1", _reply(generated))
+
+    cache.close()

@@ -1,64 +1,72 @@
 from __future__ import annotations
 
-import os
-import stat
 import threading
-from dataclasses import dataclass
+from contextlib import suppress
+from dataclasses import replace
 from pathlib import Path
 
+from study_discord_agent.discord_delivery_entries import (
+    CachedReply,
+    DiscordDeliveryCacheError,
+    TransferredReply,
+    generated_index,
+    snapshot_entry,
+    validate_restored_policy,
+    validated_delivery_policy,
+)
+from study_discord_agent.discord_delivery_files import close_resources
+from study_discord_agent.discord_delivery_resources import DiscordDeliveryLease
+from study_discord_agent.discord_file_descriptors import DeliveryFileError
+from study_discord_agent.discord_generated_file import (
+    GeneratedFileOwnership,
+    open_generated_candidate,
+)
 from study_discord_agent.discord_reply_content import (
     MAX_DISCORD_ATTACHMENTS,
     PreparedDiscordReply,
 )
 
 
-class DiscordDeliveryCacheError(RuntimeError):
-    """A delivery reply could not be cached with unambiguous ownership."""
-
-
-@dataclass(frozen=True)
-class _FileIdentity:
-    device: int
-    inode: int
-    file_type: int
-
-
-@dataclass(frozen=True)
-class _CachedReply:
-    reply: PreparedDiscordReply
-    generated_path: Path | None
-    generated_identity: _FileIdentity | None
-
-
 class DiscordDeliveryCache:
     def __init__(self) -> None:
-        self._entries: dict[str, _CachedReply] = {}
+        self._entries: dict[str, CachedReply] = {}
+        self._processing: set[str] = set()
+        self._reserved_paths: set[tuple[int, int, str]] = set()
+        self._reserved_files: set[tuple[int, int]] = set()
+        self._transferred: dict[int, TransferredReply] = {}
         self._closed = False
         self._lock = threading.Lock()
 
     def put(self, task_id: str, reply: PreparedDiscordReply) -> None:
         with self._lock:
-            if self._closed:
-                raise DiscordDeliveryCacheError("Discord delivery cache is closed")
-            if task_id in self._entries:
-                raise DiscordDeliveryCacheError("Discord task reply is already cached")
-            if not task_id:
-                raise DiscordDeliveryCacheError("Discord delivery cache task ID is invalid")
-            if len(reply.files) > MAX_DISCORD_ATTACHMENTS:
-                raise DiscordDeliveryCacheError(
-                    "Discord delivery replies accept at most 10 files"
-                )
-            generated = reply.generated_file
-            if generated is not None and generated not in reply.files:
-                raise DiscordDeliveryCacheError(
-                    "Generated Discord reply file must be included in reply files"
-                )
-            generated_path = _absolute_path(generated) if generated is not None else None
-            generated_identity = _capture_identity(generated_path)
-            self._entries[task_id] = _CachedReply(
+            self._validate_put(task_id, reply)
+            generated_position = generated_index(reply)
+            generated: GeneratedFileOwnership | None = None
+            if generated_position is not None:
+                generated_file = reply.generated_file
+                assert generated_file is not None
+                try:
+                    candidate = open_generated_candidate(generated_file)
+                except DeliveryFileError as exc:
+                    raise DiscordDeliveryCacheError(str(exc)) from exc
+                try:
+                    if (
+                        candidate.path_reservation in self._reserved_paths
+                        or candidate.file_reservation in self._reserved_files
+                    ):
+                        raise DiscordDeliveryCacheError(
+                            "Generated Discord reply file is already owned"
+                        )
+                    generated = candidate.quarantine()
+                except DeliveryFileError as exc:
+                    raise DiscordDeliveryCacheError(str(exc)) from exc
+                finally:
+                    candidate.close()
+                self._reserve(generated)
+            self._entries[task_id] = CachedReply(
                 reply=reply,
-                generated_path=generated_path,
-                generated_identity=generated_identity,
+                generated_index=generated_position,
+                generated=generated,
             )
 
     def consume(
@@ -67,131 +75,220 @@ class DiscordDeliveryCache:
         allowed_roots: tuple[Path, ...],
         max_bytes: int,
     ) -> PreparedDiscordReply | None:
-        with self._lock:
-            entry = self._entries.pop(task_id, None)
+        entry = self._claim(task_id)
         if entry is None:
             return None
+        try:
+            normalized_roots = validated_delivery_policy(allowed_roots, max_bytes)
+            if entry.lease is not None:
+                validate_restored_policy(entry, normalized_roots, max_bytes)
+                entry.lease.activate_for_delivery(
+                    lambda: self._remove_claimed(
+                        task_id,
+                        entry,
+                        release_reservation=False,
+                    )
+                )
+                return entry.reply
+            paths, resources = snapshot_entry(entry, allowed_roots, max_bytes)
+        except DeliveryFileError:
+            try:
+                self._cleanup_entry(entry)
+            except BaseException:
+                self._unclaim(task_id)
+                raise
+            self._remove_claimed(task_id, entry, release_reservation=True)
+            return None
+        except BaseException:
+            self._unclaim(task_id)
+            raise
 
-        validated = _validate_entry(entry, allowed_roots, max_bytes)
-        if validated is not None:
-            return validated
-        _delete_owned_generated(entry)
-        return None
+        try:
+            lease: DiscordDeliveryLease
+            lease = DiscordDeliveryLease(
+                files=tuple(resources),
+                _release=lambda: self._release_transferred(lease),
+            )
+            generated_file = (
+                paths[entry.generated_index] if entry.generated_index is not None else None
+            )
+            prepared = PreparedDiscordReply(
+                message=entry.reply.message,
+                files=tuple(paths),
+                generated_file=generated_file,
+                delivery_lease=lease,
+            )
+            transfer = TransferredReply(
+                task_id=task_id,
+                entry=entry,
+                reply=prepared,
+                lease=lease,
+                allowed_roots=normalized_roots,
+                max_bytes=max_bytes,
+            )
+            self._transfer_claimed(task_id, entry, transfer)
+            return prepared
+        except BaseException:
+            with suppress(BaseException):
+                close_resources(resources)
+            self._unclaim(task_id)
+            raise
+
+    def restore(self, task_id: str, reply: PreparedDiscordReply) -> None:
+        lease = reply.delivery_lease
+        if lease is None:
+            raise DiscordDeliveryCacheError("Discord delivery reply has no active lease")
+        lease.reclaim_for_cache(
+            lambda: self._restore_transferred(task_id, reply, lease)
+        )
 
     def discard(self, task_id: str) -> None:
-        with self._lock:
-            entry = self._entries.pop(task_id, None)
-        if entry is not None:
-            _delete_owned_generated(entry)
+        entry = self._claim(task_id)
+        if entry is None:
+            return
+        try:
+            self._cleanup_entry(entry)
+        except BaseException:
+            self._unclaim(task_id)
+            raise
+        self._remove_claimed(task_id, entry, release_reservation=True)
 
     def close(self) -> None:
         with self._lock:
-            if self._closed:
-                return
             self._closed = True
-            entries = tuple(self._entries.values())
-            self._entries.clear()
-        first_error: DiscordDeliveryCacheError | None = None
-        for entry in entries:
+            task_ids = tuple(self._entries)
+        first_error: BaseException | None = None
+        for task_id in task_ids:
+            entry = self._claim(task_id)
+            if entry is None:
+                continue
             try:
-                _delete_owned_generated(entry)
-            except DiscordDeliveryCacheError as exc:
+                self._cleanup_entry(entry)
+            except BaseException as exc:
+                self._unclaim(task_id)
                 first_error = first_error or exc
+            else:
+                self._remove_claimed(task_id, entry, release_reservation=True)
         if first_error is not None:
             raise first_error
 
+    def _validate_put(self, task_id: str, reply: PreparedDiscordReply) -> None:
+        if self._closed:
+            raise DiscordDeliveryCacheError("Discord delivery cache is closed")
+        if task_id in self._entries:
+            raise DiscordDeliveryCacheError("Discord task reply is already cached")
+        if any(transfer.task_id == task_id for transfer in self._transferred.values()):
+            raise DiscordDeliveryCacheError("Discord task reply is already in flight")
+        if not task_id:
+            raise DiscordDeliveryCacheError("Discord delivery cache task ID is invalid")
+        if len(reply.files) > MAX_DISCORD_ATTACHMENTS:
+            raise DiscordDeliveryCacheError("Discord delivery replies accept at most 10 files")
+        if reply.delivery_lease is not None:
+            raise DiscordDeliveryCacheError("Discord delivery reply already has an active lease")
 
-def _validate_entry(
-    entry: _CachedReply,
-    allowed_roots: tuple[Path, ...],
-    max_bytes: int,
-) -> PreparedDiscordReply | None:
-    reply = entry.reply
-    generated = reply.generated_file
-    if not allowed_roots or type(max_bytes) is not int or max_bytes < 0:
-        return None
-    if generated is not None and generated not in reply.files:
-        return None
-    try:
-        resolved_roots = tuple(_validated_root(root) for root in allowed_roots)
-        generated_index = reply.files.index(generated) if generated is not None else None
-        validated_files: list[Path] = []
-        for index, path in enumerate(reply.files):
-            absolute = _absolute_path(path)
-            status = absolute.lstat()
-            if not stat.S_ISREG(status.st_mode):
+    def _claim(self, task_id: str) -> CachedReply | None:
+        with self._lock:
+            if task_id in self._processing:
                 return None
-            resolved = absolute.resolve(strict=True)
-            if not any(resolved.is_relative_to(root) for root in resolved_roots):
-                return None
-            if status.st_size > max_bytes:
-                return None
-            if index == generated_index and not _matches_owned_generated(entry, status):
-                return None
-            validated_files.append(resolved)
-    except (OSError, RuntimeError, ValueError):
-        return None
+            entry = self._entries.get(task_id)
+            if entry is not None:
+                self._processing.add(task_id)
+            return entry
 
-    validated_generated = (
-        validated_files[generated_index] if generated_index is not None else None
-    )
-    return PreparedDiscordReply(
-        message=reply.message,
-        files=tuple(validated_files),
-        generated_file=validated_generated,
-    )
+    def _unclaim(self, task_id: str) -> None:
+        with self._lock:
+            self._processing.discard(task_id)
 
+    def _remove_claimed(
+        self,
+        task_id: str,
+        entry: CachedReply,
+        *,
+        release_reservation: bool,
+    ) -> None:
+        with self._lock:
+            if self._entries.get(task_id) is entry:
+                self._entries.pop(task_id)
+            self._processing.discard(task_id)
+            if release_reservation and entry.generated is not None:
+                self._release_reservation(entry.generated)
 
-def _validated_root(root: Path) -> Path:
-    resolved = root.expanduser().resolve(strict=True)
-    if not resolved.is_dir():
-        raise ValueError("allowed root is not a directory")
-    return resolved
+    def _transfer_claimed(
+        self,
+        task_id: str,
+        entry: CachedReply,
+        transfer: TransferredReply,
+    ) -> None:
+        with self._lock:
+            if self._entries.get(task_id) is not entry:
+                raise DiscordDeliveryCacheError("Discord delivery cache claim was lost")
+            lease_id = id(transfer.lease)
+            try:
+                self._transferred[lease_id] = transfer
+                self._entries.pop(task_id)
+                self._processing.discard(task_id)
+            except BaseException:
+                self._transferred.pop(lease_id, None)
+                self._entries[task_id] = entry
+                raise
 
+    def _restore_transferred(
+        self,
+        task_id: str,
+        reply: PreparedDiscordReply,
+        lease: DiscordDeliveryLease,
+    ) -> None:
+        with self._lock:
+            transfer = self._transferred.get(id(lease))
+            if transfer is None or transfer.lease is not lease:
+                raise DiscordDeliveryCacheError(
+                    "Discord delivery lease does not belong to this cache"
+                )
+            if task_id != transfer.task_id:
+                raise DiscordDeliveryCacheError(
+                    "Discord delivery lease belongs to its original task"
+                )
+            if transfer.reply is not reply:
+                raise DiscordDeliveryCacheError(
+                    "Discord cache restore requires the exact in-flight reply"
+                )
+            if self._closed:
+                raise DiscordDeliveryCacheError("Discord delivery cache is closed")
+            if task_id in self._entries or task_id in self._processing:
+                raise DiscordDeliveryCacheError("Discord task reply is already cached")
+            self._entries[task_id] = replace(
+                transfer.entry,
+                reply=reply,
+                lease=lease,
+                allowed_roots=transfer.allowed_roots,
+                max_bytes=transfer.max_bytes,
+            )
 
-def _matches_owned_generated(entry: _CachedReply, status: os.stat_result) -> bool:
-    identity = entry.generated_identity
-    return identity is not None and identity == _identity(status)
+    def _reserve(self, generated: GeneratedFileOwnership) -> None:
+        self._reserved_paths.add(generated.path_reservation)
+        self._reserved_files.add(generated.file_reservation)
 
+    def _release_reservation(self, generated: GeneratedFileOwnership) -> None:
+        self._reserved_paths.discard(generated.path_reservation)
+        self._reserved_files.discard(generated.file_reservation)
 
-def _absolute_path(path: Path) -> Path:
-    return Path(os.path.abspath(os.fspath(path.expanduser())))
-
-
-def _capture_identity(path: Path | None) -> _FileIdentity | None:
-    if path is None:
-        return None
-    try:
-        return _identity(path.lstat())
-    except FileNotFoundError:
-        return None
-    except OSError as exc:
-        raise DiscordDeliveryCacheError(
-            "Generated Discord reply ownership could not be established"
-        ) from exc
-
-
-def _identity(status: os.stat_result) -> _FileIdentity:
-    return _FileIdentity(
-        device=status.st_dev,
-        inode=status.st_ino,
-        file_type=stat.S_IFMT(status.st_mode),
-    )
-
-
-def _delete_owned_generated(entry: _CachedReply) -> None:
-    path = entry.generated_path
-    identity = entry.generated_identity
-    if path is None or identity is None:
-        return
-    try:
-        status = path.lstat()
-        if _identity(status) != identity or stat.S_ISDIR(status.st_mode):
+    def _cleanup_entry(self, entry: CachedReply) -> None:
+        if entry.lease is not None:
+            entry.lease.close_from_cache()
             return
-        path.unlink()
-    except FileNotFoundError:
-        return
-    except OSError as exc:
-        raise DiscordDeliveryCacheError(
-            "Generated Discord reply file could not be cleaned up safely"
-        ) from exc
+        if entry.generated is not None:
+            entry.generated.cleanup()
+
+    def _release_transferred(self, lease: DiscordDeliveryLease) -> None:
+        with self._lock:
+            transfer = self._transferred.get(id(lease))
+            if transfer is None or transfer.lease is not lease:
+                raise DiscordDeliveryCacheError("Discord delivery lease ownership was lost")
+        if transfer.entry.generated is not None:
+            transfer.entry.generated.cleanup()
+        with self._lock:
+            current = self._transferred.get(id(lease))
+            if current is transfer:
+                self._transferred.pop(id(lease))
+                if transfer.entry.generated is not None:
+                    self._release_reservation(transfer.entry.generated)
