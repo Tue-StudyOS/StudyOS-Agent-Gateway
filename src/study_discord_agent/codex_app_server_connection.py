@@ -2,7 +2,10 @@ import asyncio
 from collections.abc import Awaitable, Callable
 
 from study_discord_agent.codex_app_server import CodexAppServerClient
-from study_discord_agent.codex_app_server_protocol import AppServerNotification
+from study_discord_agent.codex_app_server_protocol import (
+    AppServerClosedError,
+    AppServerNotification,
+)
 
 ClientFactory = Callable[[], CodexAppServerClient]
 ConnectionNotificationHandler = Callable[[int, AppServerNotification], Awaitable[None]]
@@ -23,6 +26,7 @@ class CodexAppServerConnection:
         self._unsubscribe: Callable[[], None] | None = None
         self._generation = 0
         self._stale = True
+        self._closed = False
         self._failure: BaseException | None = None
         self._recovery_task: asyncio.Task[CodexAppServerClient] | None = None
 
@@ -32,12 +36,21 @@ class CodexAppServerConnection:
 
     async def start(self) -> CodexAppServerClient:
         async with self._lifecycle_lock:
+            if self._closed:
+                raise AppServerClosedError("Codex app-server connection is closed")
             if self._client is not None and not self._stale:
                 return self._client
             if self._recovery_task is None or self._recovery_task.done():
                 self._recovery_task = asyncio.create_task(self._recover())
             recovery = self._recovery_task
-        return await asyncio.shield(recovery)
+        try:
+            return await asyncio.shield(recovery)
+        except asyncio.CancelledError:
+            async with self._lifecycle_lock:
+                closed = self._closed
+            if closed:
+                raise AppServerClosedError("Codex app-server connection is closed") from None
+            raise
 
     async def invalidate(self, generation: int, error: BaseException) -> None:
         async with self._lifecycle_lock:
@@ -59,6 +72,9 @@ class CodexAppServerConnection:
 
     async def close(self) -> None:
         async with self._lifecycle_lock:
+            if self._closed:
+                return
+            self._closed = True
             self._generation += 1
             self._stale = True
             client = self._client
@@ -78,6 +94,8 @@ class CodexAppServerConnection:
 
     async def _recover(self) -> CodexAppServerClient:
         async with self._lifecycle_lock:
+            if self._closed:
+                raise AppServerClosedError("Codex app-server connection is closed")
             self._generation += 1
             generation = self._generation
             old_client = self._client
@@ -106,9 +124,13 @@ class CodexAppServerConnection:
             raise
 
         async with self._lifecycle_lock:
-            if generation != self._generation or self._stale:
+            if self._closed or generation != self._generation or self._stale:
                 unsubscribe()
-                error = self._failure
+                error = (
+                    AppServerClosedError("Codex app-server connection is closed")
+                    if self._closed
+                    else self._failure
+                )
             else:
                 self._client = client
                 self._unsubscribe = unsubscribe

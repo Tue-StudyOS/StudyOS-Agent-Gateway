@@ -168,9 +168,10 @@ class CodexAppServerRuntime:
         state = await self._active_turn(channel_id)
         if state is None or state.done.done():
             return SteerResult.NO_ACTIVE_TURN
-        client = await self._client_for_active_turn(channel_id, state)
-        if client is None:
+        active_client = await self._client_for_active_turn(channel_id, state)
+        if active_client is None:
             return SteerResult.NO_ACTIVE_TURN
+        client, generation = active_client
         try:
             await client.steer_turn(
                 state.thread_id,
@@ -182,18 +183,19 @@ class CodexAppServerRuntime:
             if is_not_steerable_error(exc):
                 return SteerResult.NOT_STEERABLE
             if is_protocol_incompatibility(exc):
-                await raise_runtime_failure(self._connection, self._connection.generation, exc)
+                await raise_runtime_failure(self._connection, generation, exc)
             raise RuntimeError(f"Codex steering failed: {exc}") from exc
         except (AppServerClosedError, AppServerProcessError, AppServerProtocolError) as exc:
-            await raise_runtime_failure(self._connection, self._connection.generation, exc)
+            await raise_runtime_failure(self._connection, generation, exc)
         return SteerResult.STEERED
     async def interrupt(self, channel_id: int) -> bool:
         state = await self._active_turn(channel_id)
         if state is None or state.done.done():
             return False
-        client = await self._client_for_active_turn(channel_id, state)
-        if client is None:
+        active_client = await self._client_for_active_turn(channel_id, state)
+        if active_client is None:
             return False
+        client, generation = active_client
         try:
             await client.interrupt_turn(state.thread_id, state.turn_id)
         except (
@@ -202,7 +204,7 @@ class CodexAppServerRuntime:
             AppServerProtocolError,
             AppServerRpcError,
         ) as exc:
-            await raise_runtime_failure(self._connection, self._connection.generation, exc)
+            await raise_runtime_failure(self._connection, generation, exc)
         return True
     async def _active_turn(self, channel_id: int) -> ActiveTurn | None:
         async with self._lock:
@@ -233,14 +235,12 @@ class CodexAppServerRuntime:
         if state is None:
             return
         await process_notification(notification, state)
-
     async def _fail_active_turns(self, cause: BaseException) -> None:
         async with self._lock:
             states = tuple(self._active.values())
         for state in states:
             if not state.done.done():
                 state.done.set_exception(disconnected(cause))
-
     async def has_active_turn(self, channel_id: int) -> bool:
         async with self._lock:
             return channel_id in self._active
@@ -263,7 +263,7 @@ class CodexAppServerRuntime:
         self,
         channel_id: int,
         state: ActiveTurn,
-    ) -> CodexAppServerClient | None:
+    ) -> tuple[CodexAppServerClient, int] | None:
         async with self._lock:
             generation = self._active_generations.get(channel_id)
         if generation is None:
@@ -273,7 +273,7 @@ class CodexAppServerRuntime:
             state.done.set_exception(
                 disconnected(AppServerClosedError("Codex app-server disconnected"))
             )
-        return client
+        return (client, generation) if client is not None else None
 
     async def _ensure_current_generation(self, generation: int) -> None:
         if await self._connection.client_for(generation) is not None:

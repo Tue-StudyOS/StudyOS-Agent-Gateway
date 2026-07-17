@@ -44,6 +44,17 @@ class FakeAppServerClient:
         self.close_calls = 0
         self.start_error: BaseException | None = None
         self.resume_error: BaseException | None = None
+        self.steer_error: BaseException | None = None
+        self.interrupt_error: BaseException | None = None
+        self.steer_entered = asyncio.Event()
+        self.interrupt_entered = asyncio.Event()
+        self.close_entered = asyncio.Event()
+        self.release_steer = asyncio.Event()
+        self.release_interrupt = asyncio.Event()
+        self.release_close = asyncio.Event()
+        self.block_steer = False
+        self.block_interrupt = False
+        self.block_close = False
 
     async def start(self) -> object:
         if self.start_error:
@@ -103,13 +114,26 @@ class FakeAppServerClient:
         **_: object,
     ) -> TurnRef:
         self.steered_turns.append((thread_id, turn_id, prompt))
+        self.steer_entered.set()
+        if self.block_steer:
+            await self.release_steer.wait()
+        if self.steer_error:
+            raise self.steer_error
         return TurnRef(thread_id, turn_id)
 
     async def interrupt_turn(self, thread_id: str, turn_id: str) -> None:
         self.interrupted_turns.append((thread_id, turn_id))
+        self.interrupt_entered.set()
+        if self.block_interrupt:
+            await self.release_interrupt.wait()
+        if self.interrupt_error:
+            raise self.interrupt_error
 
     async def close(self) -> None:
         self.close_calls += 1
+        self.close_entered.set()
+        if self.block_close:
+            await self.release_close.wait()
 
     async def emit(self, method: str, params: JsonObject) -> None:
         notification = AppServerNotification(method, params)
@@ -366,6 +390,90 @@ async def test_exit_does_not_recover_to_steer_or_interrupt_the_old_turn(tmp_path
     assert factory.calls == 1
     with pytest.raises(AgentRuntimeDisconnected):
         await task
+
+
+@pytest.mark.asyncio
+async def test_delayed_steer_failure_does_not_invalidate_replacement(tmp_path: Path) -> None:
+    first_client = FakeAppServerClient()
+    first_client.block_steer = True
+    first_client.steer_error = AppServerProcessError("old steer failed")
+    replacement = FakeAppServerClient()
+    unexpected = FakeAppServerClient()
+    factory = FakeClientFactory([first_client, replacement, unexpected])
+    runtime = _factory_runtime(tmp_path, factory)
+    turn = asyncio.create_task(runtime.run(channel_id=1, prompt="one", cwd=tmp_path))
+    await _wait_active(first_client)
+
+    steer = asyncio.create_task(runtime.steer(channel_id=1, prompt="later"))
+    await first_client.steer_entered.wait()
+    await first_client.emit_exit(AppServerProcessError("process exited"))
+    with pytest.raises(AgentRuntimeDisconnected):
+        await turn
+    await runtime.start()
+
+    first_client.release_steer.set()
+    with pytest.raises(AgentRuntimeDisconnected):
+        await steer
+
+    await runtime.start()
+    assert factory.calls == 2
+    assert replacement.close_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_delayed_interrupt_failure_does_not_invalidate_replacement(tmp_path: Path) -> None:
+    first_client = FakeAppServerClient()
+    first_client.block_interrupt = True
+    first_client.interrupt_error = AppServerProcessError("old interrupt failed")
+    replacement = FakeAppServerClient()
+    unexpected = FakeAppServerClient()
+    factory = FakeClientFactory([first_client, replacement, unexpected])
+    runtime = _factory_runtime(tmp_path, factory)
+    turn = asyncio.create_task(runtime.run(channel_id=1, prompt="one", cwd=tmp_path))
+    await _wait_active(first_client)
+
+    interrupt = asyncio.create_task(runtime.interrupt(1))
+    await first_client.interrupt_entered.wait()
+    await first_client.emit_exit(AppServerProcessError("process exited"))
+    with pytest.raises(AgentRuntimeDisconnected):
+        await turn
+    await runtime.start()
+
+    first_client.release_interrupt.set()
+    with pytest.raises(AgentRuntimeDisconnected):
+        await interrupt
+
+    await runtime.start()
+    assert factory.calls == 2
+    assert replacement.close_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_close_is_terminal_during_and_after_old_client_shutdown(tmp_path: Path) -> None:
+    first_client = FakeAppServerClient()
+    first_client.block_close = True
+    replacement = FakeAppServerClient()
+    factory = FakeClientFactory([first_client, replacement])
+    runtime = _factory_runtime(tmp_path, factory)
+    await runtime.start()
+
+    closing = asyncio.create_task(runtime.close())
+    await first_client.close_entered.wait()
+
+    with pytest.raises(AgentRuntimeDisconnected):
+        await runtime.start()
+    with pytest.raises(AgentRuntimeDisconnected):
+        await runtime.run(channel_id=1, prompt="new", cwd=tmp_path)
+    assert factory.calls == 1
+    assert replacement.started == 0
+    assert replacement.started_turns == []
+
+    first_client.release_close.set()
+    await closing
+
+    with pytest.raises(AgentRuntimeDisconnected):
+        await runtime.start()
+    assert factory.calls == 1
 
 
 @pytest.mark.asyncio
