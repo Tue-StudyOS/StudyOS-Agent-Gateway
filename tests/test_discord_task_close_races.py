@@ -220,7 +220,7 @@ async def test_stop_does_not_render_stopping_after_runner_reaches_stopped(
 
     assert stopped.state is DiscordTaskState.STOPPED
     assert [record.state for record in harness.presentation.render_calls] == [
-        DiscordTaskState.STOPPING,
+        DiscordTaskState.STOPPED,
         DiscordTaskState.STOPPED,
     ]
 

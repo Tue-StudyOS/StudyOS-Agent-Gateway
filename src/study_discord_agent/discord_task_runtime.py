@@ -3,6 +3,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime
+from weakref import WeakValueDictionary
 
 from study_discord_agent.agent import AgentExecutionContext, AgentGateway, AgentReply
 from study_discord_agent.agent_errors import (
@@ -84,7 +85,7 @@ class DiscordTaskRuntime:
         self._delivery = delivery
         self._timestamp = timestamp
         self._runners = DiscordTaskRunners()
-        self._render_locks: dict[str, asyncio.Lock] = {}
+        self._render_locks = WeakValueDictionary[str, asyncio.Lock]()
 
     def spawn_agent(self, task_id: str, spec: AgentRunSpec) -> None:
         self._runners.spawn(task_id, self._agent_runner(task_id, spec))
