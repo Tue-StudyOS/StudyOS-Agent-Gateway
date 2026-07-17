@@ -216,7 +216,11 @@ async def test_create_race_deletes_orphan_card(tmp_path: Path) -> None:
             winner = self.compare_and_set(
                 mirror_id,
                 current.revision,
-                lambda record: replace(record, card_message_id=777),
+                lambda record: replace(
+                    record,
+                    card_message_id=777,
+                    card_create_pending=False,
+                ),
             )
             return winner, False
 

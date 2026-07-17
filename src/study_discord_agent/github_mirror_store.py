@@ -163,13 +163,51 @@ class GitHubMirrorStore:
                 return current, False
             updated = updated_record(
                 current,
-                lambda record: replace(record, card_message_id=message_id),
+                lambda record: replace(
+                    record,
+                    card_message_id=message_id,
+                    card_create_pending=False,
+                ),
                 _timestamp(self._clock()),
             )
             updated_records = dict(records)
             updated_records[mirror_id] = updated
             self._commit(updated_records)
             return updated, True
+
+    def claim_card_creation(
+        self, mirror_id: str
+    ) -> tuple[GitHubMirrorRecord, bool]:
+        self._reject_callback_mutation()
+        with self._canonical_records() as records:
+            current = records[mirror_id]
+            if current.card_message_id is not None or current.card_create_pending:
+                return current, False
+            updated = updated_record(
+                current,
+                lambda record: replace(record, card_create_pending=True),
+                _timestamp(self._clock()),
+            )
+            updated_records = dict(records)
+            updated_records[mirror_id] = updated
+            self._commit(updated_records)
+            return updated, True
+
+    def release_card_creation(self, mirror_id: str) -> GitHubMirrorRecord:
+        self._reject_callback_mutation()
+        with self._canonical_records() as records:
+            current = records[mirror_id]
+            if current.card_message_id is not None or not current.card_create_pending:
+                return current
+            updated = updated_record(
+                current,
+                lambda record: replace(record, card_create_pending=False),
+                _timestamp(self._clock()),
+            )
+            updated_records = dict(records)
+            updated_records[mirror_id] = updated
+            self._commit(updated_records)
+            return updated
 
     def clear_card_if_matches(self, mirror_id: str, message_id: int) -> GitHubMirrorRecord:
         self._reject_callback_mutation()
@@ -179,7 +217,11 @@ class GitHubMirrorStore:
                 return current
             updated = updated_record(
                 current,
-                lambda record: replace(record, card_message_id=None),
+                lambda record: replace(
+                    record,
+                    card_message_id=None,
+                    card_create_pending=False,
+                ),
                 _timestamp(self._clock()),
             )
             updated_records = dict(records)

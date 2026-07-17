@@ -132,6 +132,7 @@ class GitHubMirrorRecord:
     guild_id: int
     channel_id: int
     card_message_id: int | None
+    card_create_pending: bool
     thread_id: int | None
     repository_full_name: str
     item_kind: GitHubItemKind
@@ -164,6 +165,10 @@ class GitHubMirrorRecord:
         _positive_integer(self.guild_id, "guild_id")
         _positive_integer(self.channel_id, "channel_id")
         _optional_positive_integer(self.card_message_id, "card_message_id")
+        if type(self.card_create_pending) is not bool:
+            raise ValueError("card_create_pending must be a boolean")
+        if self.card_message_id is not None and self.card_create_pending:
+            raise ValueError("an attached card cannot have pending creation")
         _optional_positive_integer(self.thread_id, "thread_id")
         _item_identity(self.repository_full_name, self.item_kind, self.item_number, self.item_url)
         _bounded_text(self.title, "title", MAX_TITLE_LENGTH)

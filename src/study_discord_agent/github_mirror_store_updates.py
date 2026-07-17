@@ -22,6 +22,7 @@ def record_from_event(
         guild_id=guild_id,
         channel_id=channel_id,
         card_message_id=None,
+        card_create_pending=False,
         thread_id=None,
         repository_full_name=event.repository_full_name,
         item_kind=event.item_kind,
@@ -125,10 +126,10 @@ def _should_apply_event(record: GitHubMirrorRecord, event: GitHubMirrorEvent) ->
     if event_timestamp != record_timestamp:
         return event_timestamp > record_timestamp
     terminal_rank = {
-        GitHubItemState.OPEN: 0,
         GitHubItemState.DRAFT: 0,
-        GitHubItemState.CLOSED: 1,
-        GitHubItemState.MERGED: 2,
+        GitHubItemState.OPEN: 1,
+        GitHubItemState.CLOSED: 2,
+        GitHubItemState.MERGED: 3,
     }
     return terminal_rank[event.state] >= terminal_rank[record.state]
 

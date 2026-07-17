@@ -68,6 +68,7 @@ def _decode_record(raw: object) -> GitHubMirrorRecord:
         guild_id=_integer(data, "guild_id"),
         channel_id=_integer(data, "channel_id"),
         card_message_id=_optional_integer(data, "card_message_id"),
+        card_create_pending=_boolean(data, "card_create_pending"),
         thread_id=_optional_integer(data, "thread_id"),
         repository_full_name=_string(data, "repository_full_name"),
         item_kind=GitHubItemKind(_string(data, "item_kind")),
@@ -153,6 +154,13 @@ def _integer(data: Mapping[str, object], key: str) -> int:
     value = data[key]
     if type(value) is not int:
         raise ValueError(f"{key} must be an integer")
+    return value
+
+
+def _boolean(data: Mapping[str, object], key: str) -> bool:
+    value = data[key]
+    if type(value) is not bool:
+        raise ValueError(f"{key} must be a boolean")
     return value
 
 
