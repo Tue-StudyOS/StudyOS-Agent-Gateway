@@ -6,7 +6,7 @@
 2. Add a bot user and copy the bot token into `DISCORD_TOKEN`.
 3. Enable the message content intent.
 4. Invite the bot with the `bot` scope.
-4. Copy the target PR channel ID into `DISCORD_PR_CHANNEL_ID` if you want GitHub notification mirrors or poller summaries in Discord.
+4. Copy the target PR channel ID into `DISCORD_PR_CHANNEL_ID` if you want passive GitHub notification mirrors in Discord.
 5. Optionally copy the server ID into `DISCORD_GUILD_ID` so old slash commands can be cleared quickly.
 
 StudyOS interaction is mention-first. Participants tag the bot in Discord when they want to brainstorm, ask for research, refine an issue, or start a scoped task.
@@ -19,7 +19,7 @@ StudyOS interaction is mention-first. Participants tag the bot in Discord when t
 4. Generate a random secret and put it in both GitHub and `GITHUB_WEBHOOK_SECRET`.
 5. Subscribe to pull request, issue, and issue comment events.
 
-Webhooks are optional. The simpler deployment is to authenticate `gh` and Codex in the container, then let Codex poll and navigate GitHub with the CLI on a schedule. Keep `GITHUB_TOKEN` only as a non-interactive read fallback.
+Webhooks are optional. The simpler deployment supports explicit Discord tasks only. Add a webhook when the course wants passive GitHub event cards in a Discord channel.
 
 For a first Discord-only smoke test, you only need `DISCORD_TOKEN`, `DISCORD_MESSAGE_AGENT_ENABLED=true`, and either `AGENT_COMMAND` or `AGENT_WEBHOOK_URL`.
 
@@ -102,9 +102,7 @@ that course environment.
 
 For richer Discord interactions, generated files should be written under
 `/tmp/studyos-artifacts` or `/workspaces`. The bot validates artifact paths
-against `DISCORD_ARTIFACT_ALLOWED_ROOTS` before upload. Start proactive
-Discord participation with `DISCORD_PROACTIVE_DRY_RUN=true`; only set it to
-`false` after testing in a low-risk server.
+against `DISCORD_ARTIFACT_ALLOWED_ROOTS` before upload.
 
 Normal Discord answers are intentionally short. Long Markdown, fenced code,
 logs, and structured write-ups are uploaded as attachments instead of being
@@ -117,26 +115,10 @@ AGENT_COMMAND="claude -p --permission-mode acceptEdits"
 AGENT_WORKDIR=/workspaces
 ```
 
-Use `AGENT_AUTO_REVIEW_ENABLED=true` only after mention-based agent usage works
-reliably. Webhook-triggered agent runs do not require `DISCORD_PR_CHANNEL_ID`;
-set that channel only when webhook notifications or poller summaries should be
-mirrored into Discord.
-
-## Periodic GitHub Triage
-
-Set:
-
-```bash
-GITHUB_POLL_ENABLED=true
-GITHUB_POLL_INTERVAL_SECONDS=1800
-GITHUB_POLL_LIMIT=20
-```
-
-The bot will periodically list open PRs and issues, build one prompt, and invoke the agent. This is the safest shape for "every 15 or 30 minutes, check comments/issues/PRs and summarize" because scheduling remains outside Discord message handling and can be disabled independently.
-
-When `GITHUB_TOKEN` is not set, the poller uses `gh auth token`, so the container's `gh auth login` session is enough. For more advanced scheduled work, Codex automations can skip the bot poller entirely and directly prompt Codex to inspect the repository with `gh`.
-
-Unattended triage should refine issues, surface duplicates, summarize stale PRs, and invite review attention. It should not start implementation by itself. A student should explicitly ask the bot to implement a specific issue in Discord or GitHub before it creates a branch or PR.
+Webhook intake requires `DISCORD_GUILD_ID` and `DISCORD_PR_CHANNEL_ID`. It only
+publishes or edits a passive mirror card. It does not run an agent, comment on
+GitHub, create a branch, or open a pull request. Those actions require an
+explicit Discord mention or mirror-card action from a participant.
 
 ## External Agent Runtime
 

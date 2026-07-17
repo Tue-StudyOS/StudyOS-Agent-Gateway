@@ -17,6 +17,7 @@ Goals:
 - Suggest next implementation steps only when scope is clear.
 - Do not start implementation, create branches, or create PRs from this
   unattended triage run.
+- Do not comment, label, assign, close, edit, or otherwise mutate GitHub.
 - Treat implementation as human-gated: a student must explicitly ask the agent
   to implement an issue in Discord or in a GitHub issue comment.
 - Never merge PRs. Humans approve and merge.

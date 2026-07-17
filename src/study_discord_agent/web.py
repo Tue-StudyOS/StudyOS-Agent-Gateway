@@ -1,4 +1,5 @@
 import asyncio
+import json
 from typing import cast
 
 from fastapi import FastAPI, Header, HTTPException, Request
@@ -6,12 +7,16 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from study_discord_agent.config import Settings
 from study_discord_agent.github_events import event_from_github_webhook
 from study_discord_agent.github_mirror_model import GitHubMirrorEvent
+from study_discord_agent.github_mirror_store import GitHubMirrorStore
 from study_discord_agent.security import verify_github_signature
+
+MAX_GITHUB_WEBHOOK_BYTES = 1024 * 1024
 
 
 def create_app(
     settings: Settings,
-    queue: "asyncio.Queue[GitHubMirrorEvent]",
+    queue: "asyncio.Queue[str]",
+    mirror_store: GitHubMirrorStore,
 ) -> FastAPI:
     app = FastAPI(title="StudyOS Agent Gateway")
 
@@ -33,7 +38,7 @@ def create_app(
         if not settings.webhook_secret_value:
             raise HTTPException(status_code=503, detail="GitHub webhooks are not configured")
 
-        body = await request.body()
+        body = await _read_limited_body(request)
         if not verify_github_signature(
             settings.webhook_secret_value,
             body,
@@ -46,7 +51,7 @@ def create_app(
             )
 
         try:
-            payload = cast(object, await request.json())
+            payload = cast(object, json.loads(body))
         except (TypeError, ValueError) as error:
             raise HTTPException(status_code=400, detail="Invalid GitHub webhook payload") from error
         if not isinstance(payload, dict):
@@ -58,11 +63,35 @@ def create_app(
             cast(dict[str, object], payload),
         )
         if event:
-            await queue.put(event)
+            assert settings.discord_guild_id is not None
+            assert settings.discord_pr_channel_id is not None
+            staged = mirror_store.upsert_event(
+                event,
+                guild_id=settings.discord_guild_id,
+                channel_id=settings.discord_pr_channel_id,
+            )
+            if staged.record.publication_pending:
+                await queue.put(staged.record.mirror_id)
             return {"status": "queued"}
         return {"status": "ignored"}
 
     return app
+
+
+async def _read_limited_body(request: Request) -> bytes:
+    body = bytearray()
+    stream = request.stream()
+    try:
+        async for chunk in stream:
+            if len(body) + len(chunk) > MAX_GITHUB_WEBHOOK_BYTES:
+                raise HTTPException(
+                    status_code=413,
+                    detail="GitHub webhook payload is too large",
+                )
+            body.extend(chunk)
+    finally:
+        await stream.aclose()
+    return bytes(body)
 
 
 def _event_from_payload(

@@ -25,6 +25,7 @@ def record_from_event(
         card_create_pending=False,
         card_create_nonce=None,
         card_cleanup_nonce=None,
+        publication_pending=True,
         thread_id=None,
         repository_full_name=event.repository_full_name,
         item_kind=event.item_kind,
@@ -55,6 +56,7 @@ def update_from_event(
     deliveries = (*record.recent_delivery_ids, event.delivery_id)[-MAX_RECENT_DELIVERIES:]
     changes: dict[str, object] = {
         "recent_delivery_ids": deliveries,
+        "publication_pending": True,
         "revision": record.revision + 1,
         "updated_at": timestamp,
     }
@@ -167,6 +169,7 @@ def clear_card_record(current: GitHubMirrorRecord, timestamp: str) -> GitHubMirr
             card_create_pending=False,
             card_create_nonce=None,
             card_cleanup_nonce=None,
+            publication_pending=True,
         ),
         timestamp,
     )

@@ -13,9 +13,9 @@ Discord and GitHub gateway for shared StudyOS coding agents.
 
 `StudyOS Agent Gateway` connects the StudyOS Discord server with GitHub pull requests, issues, and agent workflows. It is a gateway tool for the StudyOS course monorepo, not the course repository itself.
 
-The goal is to give the whole StudyOS cohort one shared interface to a few deployed coding-agent instances. Not every participant needs their own Codex or Claude subscription. A small number of authenticated agent servers can listen to Discord messages, GitHub webhooks, and scheduled triage jobs, then help with issues, reviews, pull requests, and repository maintenance through the same GitHub and Discord surfaces everyone already uses.
+The goal is to give the whole StudyOS cohort one shared interface to a few deployed coding-agent instances. Not every participant needs their own Codex or Claude subscription. A small number of authenticated agent servers can handle explicit Discord requests while passive GitHub webhook cards keep issues and pull requests visible in the same collaboration surface.
 
-The Python service receives Discord mentions and optional GitHub webhooks, then invokes the configured agent command. Repository writes are done by the authenticated agent runtime through tools like `gh`, while implementation starts, PR approval, and PR merges remain human-gated.
+Discord mentions and explicit card actions invoke the configured agent command. GitHub webhooks only update passive Discord mirrors; they never invoke the agent. Repository writes are therefore tied to a human action, while implementation starts, PR approval, and PR merges remain human-gated.
 
 ## Features
 
@@ -24,18 +24,16 @@ The Python service receives Discord mentions and optional GitHub webhooks, then 
 - FastAPI webhook endpoint for GitHub `pull_request`, `issues`, and `issue_comment` events.
 - HMAC verification for GitHub webhook payloads.
 - Configurable Discord channel for PR and issue notifications.
-- Read-only GitHub REST client for polling open PRs and issues.
+- Durable, restart-reconciled Discord mirrors for GitHub events.
 - Agent runner through `AGENT_COMMAND`, or external bridge through `AGENT_WEBHOOK_URL`.
 - Local `studyos-discord-context` tool so agents can fetch recent channel context on demand.
 - Codex channel sessions: Discord channels can resume their own persisted Codex CLI session.
 - Discord attachment handoff: uploaded files are saved locally and image attachments are passed to Codex with `-i` when possible.
 - Discord artifact uploads: agents can return generated diagrams, images, or documents for the bot to post back into the channel.
 - `studyos-render-diagram` helper for rendering Graphviz DOT diagrams to PNG/SVG/PDF inside the agent image.
-- Disabled-by-default, high-signal proactive monitor for private `group-*` spaces; it stays silent unless a settled technical blocker has a concrete answer.
 - Short Discord-native replies, with long Markdown, fenced code, logs, and structured write-ups moved into attachments automatically.
-- Optional PR review summaries and issue refinement prompts on GitHub webhook events.
-- Periodic GitHub triage loop for open PRs and issues.
-- Seeded Codex app automations for triage, review nudges, issue refinement, implementation candidate discovery, a coordinator heartbeat, and a weekly digest.
+- Human-triggered PR review, security review, vulnerability scan, and implementation actions from mirror cards.
+- Paused Codex app automation templates for optional reporting workflows.
 - Docker and Docker Compose setup, including an agent image with `gh`, `git`, SSH, Node/npm, and Codex CLI installed.
 - Shared-agent deployment model for StudyOS course participants.
 
@@ -45,20 +43,22 @@ The Python service receives Discord mentions and optional GitHub webhooks, then 
 flowchart TD
     Discord["Discord mentions"] --> Bot["Discord bot"]
     GitHub["Optional GitHub webhooks"] --> API["FastAPI webhook"]
-    API --> Queue["async event queue"]
-    Queue --> Bot
-    Poller["GitHub poller"] --> Bot
+    API --> Store["durable mirror store"]
+    Store --> Queue["reconciliation queue"]
+    Queue --> Mirror["passive card publisher"]
+    Mirror --> Channel["Discord GitHub channel"]
     Bot --> Runner["Agent runner"]
+    Runner --> Bot
     Runner --> Codex["Codex CLI or other agent CLI"]
     Codex --> Workspaces["/workspaces cloned repos"]
     Codex --> GHCLI["authenticated gh CLI"]
     GHCLI --> GitHubRepo["GitHub issues and PRs"]
-    Bot --> Channel["Discord GitHub channel"]
+    Bot --> Channel
     Automations["Codex automations"] --> CodexHome["$CODEX_HOME"]
     Memory["StudyOS memory"] --> CodexHome
 ```
 
-The gateway owns Discord, webhook intake, lightweight polling, prompt assembly, and delivery back to Discord. The agent runtime owns reasoning and repository work in cloned repositories under `/workspaces`. Codex app automations are seeded into the Codex automation path; their TOML `status` controls whether a deployment with a real Codex automation runner executes them.
+The gateway owns Discord, authenticated webhook intake, durable mirror reconciliation, prompt assembly for explicit user actions, and delivery back to Discord. The agent runtime owns reasoning and repository work in cloned repositories under `/workspaces`. Codex app automation templates are seeded paused; their TOML `status` must be changed explicitly before a separate automation runner can execute them.
 
 ## Quick Start
 
@@ -190,25 +190,17 @@ docker compose -f docker-compose.agent.yml exec studyos-agent-gateway codex logi
 | --- | --- |
 | `DISCORD_TOKEN` | Discord bot token |
 | `DISCORD_GUILD_ID` | Optional guild ID used to clear old commands faster |
-| `DISCORD_PR_CHANNEL_ID` | Optional Discord channel ID for GitHub notification mirrors and poller summaries |
+| `DISCORD_PR_CHANNEL_ID` | Discord channel ID for passive GitHub notification mirrors |
 | `GITHUB_WEBHOOK_SECRET` | Secret configured on the GitHub webhook |
 | `GITHUB_TOKEN` | Optional fallback token; `gh auth login` is the preferred agent-server path |
 | `GITHUB_REPOSITORY` | Default repository in `owner/name` form |
-| `GITHUB_POLL_ENABLED` | Periodically asks the agent to triage open PRs/issues |
-| `GITHUB_POLL_INTERVAL_SECONDS` | Poll interval, for example `900` or `1800` |
 | `DISCORD_MESSAGE_AGENT_ENABLED` | Enables mention-based Discord collaboration |
 | `DISCORD_ATTACHMENT_DIR` | Local directory for Discord message attachments |
 | `DISCORD_ARTIFACT_ALLOWED_ROOTS` | Comma-separated roots the bot may upload files from |
 | `DISCORD_ARTIFACT_MAX_BYTES` | Maximum generated file size for Discord upload |
-| `DISCORD_PROACTIVE_AGENT_ENABLED` | Enables the opt-in high-signal monitor for private `group-*` channels and their threads |
-| `DISCORD_PROACTIVE_INTERVAL_SECONDS` | Proactive monitor interval |
-| `DISCORD_PROACTIVE_RECENT_ACTIVITY_SECONDS` | Maximum age of latest human message before a channel is skipped |
-| `DISCORD_PROACTIVE_MIN_POST_INTERVAL_SECONDS` | Per-channel cooldown after the bot sends a proactive reply |
-| `DISCORD_PROACTIVE_DRY_RUN` | Logs proactive replies instead of sending them |
 | `AGENT_COMMAND` | Local agent CLI command, prompt is passed on stdin |
 | `AGENT_WORKDIR` | Working directory for the agent command |
 | `AGENT_TIMEOUT_SECONDS` | Max runtime for one agent invocation |
-| `AGENT_AUTO_REVIEW_ENABLED` | Runs the agent on useful GitHub webhook events |
 | `AGENT_CHANNEL_SESSIONS_ENABLED` | Resume one Codex session per Discord channel when `AGENT_COMMAND` is `codex exec` |
 | `AGENT_SESSION_STORE_PATH` | Optional override for the Discord channel to Codex session JSON store |
 | `AGENT_DISCORD_WORKTREE_ROOT` | Per Discord channel/thread root for parallel Codex worktrees |
@@ -235,26 +227,23 @@ Recommended events if you want webhook-triggered updates:
 
 Set the webhook content type to `application/json` and use the same secret as `GITHUB_WEBHOOK_SECRET`.
 
-For mention-only testing, you can skip GitHub webhooks. Set `GITHUB_WEBHOOK_SECRET`
-and `AGENT_AUTO_REVIEW_ENABLED=true` when you want GitHub events to trigger the
-agent. Set `DISCORD_PR_CHANNEL_ID` only when you also want webhook notifications
-or scheduled triage summaries mirrored into Discord.
+For mention-only testing, you can skip GitHub webhooks. A configured webhook
+requires `GITHUB_WEBHOOK_SECRET`, `DISCORD_GUILD_ID`, and
+`DISCORD_PR_CHANNEL_ID`. Signed events update passive mirror cards. Only a
+Discord user clicking a card action or explicitly mentioning the bot can start
+agent work.
 
 ## GitHub Permissions
 
-The preferred deployment path is `gh auth login` inside the agent container or on the host. The Python GitHub client will use `GITHUB_TOKEN` when set, otherwise it will try `gh auth token`.
-
-For a fine-grained token fallback used by polling, grant only the repositories you need:
-
-- Pull requests: read
-- Issues: read
-- Metadata: read
+The passive webhook mirror does not require a GitHub API token. Use `gh auth
+login` inside the agent container only for human-triggered agent work, and scope
+that identity to the repositories and operations participants actually need.
 
 Agent-side write access, if enabled through `gh auth login`, should be governed by branch protection and the runtime prompt. The bot does not expose a merge command. StudyOS students approve and merge PRs manually through GitHub.
 
 ## Agent Runner
 
-The bot does not embed one specific agent framework. Instead, Discord mentions, optional webhooks, and the poller call one configured runner.
+The bot does not embed one specific agent framework. Discord mentions and explicit mirror-card actions call one configured runner.
 
 Examples:
 
@@ -266,20 +255,14 @@ AGENT_COMMAND="/opt/picoclaw/bin/picoclaw run --stdin"
 
 For Codex, authenticate once in the agent container or mount an existing `CODEX_HOME`. For GitHub, authenticate with `gh auth login` in the same container. For Claude Code, authenticate on the deployment machine or use its supported long-lived token setup. The point is to run a few trusted StudyOS agent instances for the cohort, while keeping repository writes protected by branch protection, review norms, and GitHub token scopes.
 
-The simplest operating mode does not require GitHub webhooks: run the authenticated CLI runtime and let Codex periodically inspect issues, comments, and PRs with `gh`. Webhooks are only a low-latency trigger when that is worth the extra setup.
+The simplest operating mode does not require GitHub webhooks: participants mention the bot for scoped work. Add webhooks when a passive, low-latency Discord view of GitHub activity is useful.
 
 Implementation is intentionally human-gated. The agent may refine issues, propose plans, summarize PRs, and answer review questions. It should start a branch or PR only after a human explicitly asks for implementation in Discord or a GitHub issue comment. It must never merge PRs.
 
 ## Scheduled Work
 
-Set `GITHUB_POLL_ENABLED=true` to make the bot check open PRs and issues every `GITHUB_POLL_INTERVAL_SECONDS`. The poller builds one triage prompt and sends it to the configured agent runner. That is the right place for tasks like:
-
-- summarize stale PRs
-- unify duplicate issues
-- ask refinement questions on blocked work
-- invite reviewers for new PRs
-
-Codex automations are seeded under `$CODEX_HOME/automations/`:
+The gateway has no periodic GitHub agent loop. Codex automation templates are
+seeded under `$CODEX_HOME/automations/`, paused by default:
 
 - `studyos-github-triage`: inspect issues, PRs, comments, and review activity every 30 minutes.
 - `studyos-pr-review-nudge`: find PRs that need review attention every 2 hours.

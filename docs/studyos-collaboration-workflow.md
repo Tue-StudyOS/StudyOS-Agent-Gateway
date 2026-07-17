@@ -41,9 +41,8 @@ the PR is blocked, or the group agrees to a reviewer rotation.
 
 ## Discord Channel Routing
 
-GitHub webhooks can run the agent without an outbound Discord channel. If
-`DISCORD_PR_CHANNEL_ID` is configured, GitHub webhook notifications, poller
-summaries, and agent triage summaries are mirrored there.
+GitHub webhook intake is passive and requires `DISCORD_PR_CHANNEL_ID`. Events
+create or update mirror cards in that channel; they never run the agent.
 
 Future channel routing could split:
 
@@ -51,8 +50,8 @@ Future channel routing could split:
 - `#agent-lab`: bot brainstorming and agent coordination.
 - `#release`: weekly digest, milestones, deploy readiness.
 
-Until channel routing exists, keep automation output short and post only
-actionable Discord items to the configured GitHub channel.
+Until channel routing exists, keep human-triggered agent output short and post
+only actionable Discord items to the configured GitHub channel.
 
 ## Webhooks Vs Automations
 
@@ -64,23 +63,23 @@ Use GitHub webhooks for low-latency event posts:
 - issue opened or commented
 - CI failure if webhook coverage is added later
 
-Use Codex automations as the slower coordination layer:
+Paused Codex automation templates can be used as a slower, report-only
+coordination layer when a separate operator explicitly activates them:
 
-- recurring triage of issues and PR comments
+- recurring reports about issues and PR comments
 - stale review reminders
 - finding implementation-ready issues
 - weekly progress digest
 - maintaining a long-lived coordinator thread
 
-If webhooks are not configured, a 15-30 minute GitHub triage automation can be
-the backstop for posting new PRs and review needs. Once webhooks are configured,
-the triage automation should become less chatty and focus on synthesis.
+The gateway itself does not schedule GitHub triage. Any external automation
+must avoid GitHub mutations and hand action recommendations back to a human.
 
 ## Suggested Automation Set
 
 `studyos-github-triage`: every 30 minutes. Checks new or recently updated
 issues, PRs, review comments, and blockers. Good default while the repo is
-active.
+active, but ships paused and report-only.
 
 `studyos-pr-review-nudge`: every 2 hours. Finds PRs missing reviewers, stale
 review threads, or PRs waiting on CI. During heavy course activity, this might

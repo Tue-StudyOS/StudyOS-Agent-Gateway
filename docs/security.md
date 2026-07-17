@@ -6,18 +6,21 @@ The gateway can become powerful once the agent runtime has authenticated GitHub 
 
 - The Python bot exposes no PR merge command and no issue close command.
 - GitHub webhook payloads require HMAC verification.
+- GitHub webhooks only update passive Discord mirror cards.
 - Discord collaboration is mention-gated.
 - PR merges are human-only through GitHub.
 
 ## Recommended GitHub Token
 
-Prefer `gh auth login` in the deployment container for the interactive agent-server setup. Use a fine-grained token or GitHub App installation token only for non-interactive read polling.
+Prefer `gh auth login` in the deployment container for explicit,
+human-triggered agent tasks. The passive webhook publisher needs no GitHub API
+token.
 
 Grant only what is needed:
 
 - Metadata: read
-- Issues: read for polling
-- Pull requests: read for polling
+- Issues: only when an explicit task needs them
+- Pull requests: only when an explicit task needs them
 
 ## Operational Rules
 

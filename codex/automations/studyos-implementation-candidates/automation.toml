@@ -10,6 +10,7 @@ criteria, and expected behavior are clear. Propose a small PR plan and tests.
 Do not implement from this automation. Implementation requires a separate human
 trigger such as a Discord mention asking the bot to implement an issue or a
 GitHub issue comment that explicitly asks the agent to start. Never merge PRs.
+Do not comment, label, assign, close, edit, or otherwise mutate GitHub.
 
 Output ready candidates, why they are ready, and any remaining risks."""
 status = "PAUSED"

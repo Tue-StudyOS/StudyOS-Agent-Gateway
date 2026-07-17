@@ -6,7 +6,8 @@ prompt = """Create a weekly StudyOS repository digest from GitHub activity.
 
 Summarize merged PRs, open PRs needing review, issues created or refined, stale
 or duplicate tickets, blockers, and suggested next milestones for the course.
-Keep it constructive and friendly. Never merge PRs."""
+Keep it constructive and friendly. Never merge PRs. Do not comment, label,
+assign, close, edit, or otherwise mutate GitHub."""
 status = "PAUSED"
 rrule = "RRULE:FREQ=WEEKLY;BYDAY=TH;BYHOUR=16;BYMINUTE=0"
 model = "gpt-5.6-sol"

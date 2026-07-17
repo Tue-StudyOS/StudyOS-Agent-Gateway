@@ -1,5 +1,6 @@
 import json
 import os
+from base64 import urlsafe_b64encode
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -170,6 +171,7 @@ def test_store_persists_strict_private_bounded_metadata_and_reloads(tmp_path: Pa
     document = path.read_text(encoding="utf-8")
     payload = json.loads(document)
     assert set(payload) == {"version", "mirrors"}
+    assert payload["version"] == 2
     assert os.stat(path).st_mode & 0o777 == 0o600
     assert len(record.recent_delivery_ids) == DELIVERY_ID_LIMIT
     assert len(record.handled_interaction_claims) == HANDLED_CLAIM_LIMIT
@@ -287,3 +289,53 @@ def test_corrupt_or_unknown_schema_fails_closed(tmp_path: Path) -> None:
     path.write_text('{"version":1,"mirrors":{},"body":"not allowed"}', encoding="utf-8")
     with pytest.raises(GitHubMirrorStoreCorruptionError):
         GitHubMirrorStore(path)
+
+
+def test_v1_record_without_nonce_fields_migrates_with_recoverable_claim(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "github-mirrors.json"
+    store = GitHubMirrorStore(path, clock=lambda: NOW)
+    record = store.upsert_event(_event(), guild_id=10, channel_id=20).record
+    claimed, _ = store.claim_card_creation(record.mirror_id)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["version"] = 1
+    legacy = payload["mirrors"][record.mirror_id]
+    legacy.pop("card_create_nonce")
+    legacy.pop("card_cleanup_nonce")
+    legacy.pop("publication_pending", None)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    migrated = GitHubMirrorStore(path, clock=lambda: NOW).get(record.mirror_id)
+
+    expected = "gm:" + urlsafe_b64encode(bytes.fromhex(record.mirror_id)).decode().rstrip("=")
+    assert migrated.card_create_pending
+    assert migrated.card_create_nonce == expected
+    assert migrated.card_cleanup_nonce is None
+    assert migrated.publication_pending
+    assert migrated.revision == claimed.revision
+
+
+def test_publication_completion_is_durable_and_revision_guarded(tmp_path: Path) -> None:
+    path = tmp_path / "github-mirrors.json"
+    store = GitHubMirrorStore(path, clock=lambda: NOW)
+    staged = store.upsert_event(_event(), guild_id=10, channel_id=20).record
+    claimed, _ = store.claim_card_creation(staged.mirror_id)
+    assert claimed.card_create_nonce is not None
+    attached, _ = store.attach_card_if_missing(
+        staged.mirror_id, 99, claimed.card_create_nonce
+    )
+    cleaned = store.complete_card_cleanup(staged.mirror_id, claimed.card_create_nonce)
+
+    stale = store.complete_publication(staged.mirror_id, attached.revision)
+    completed = store.complete_publication(staged.mirror_id, cleaned.revision)
+
+    assert stale.publication_pending
+    assert not completed.publication_pending
+    assert GitHubMirrorStore(path, clock=lambda: NOW).pending_publication_ids() == ()
+
+    cleared = store.clear_card_if_matches(staged.mirror_id, 99)
+    assert cleared.publication_pending
+    assert GitHubMirrorStore(path, clock=lambda: NOW).pending_publication_ids() == (
+        staged.mirror_id,
+    )

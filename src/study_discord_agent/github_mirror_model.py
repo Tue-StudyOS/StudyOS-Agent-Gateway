@@ -136,6 +136,7 @@ class GitHubMirrorRecord:
     card_create_pending: bool
     card_create_nonce: str | None
     card_cleanup_nonce: str | None
+    publication_pending: bool
     thread_id: int | None
     repository_full_name: str
     item_kind: GitHubItemKind
@@ -172,6 +173,8 @@ class GitHubMirrorRecord:
             raise ValueError("card_create_pending must be a boolean")
         _optional_card_nonce(self.card_create_nonce, "card_create_nonce")
         _optional_card_nonce(self.card_cleanup_nonce, "card_cleanup_nonce")
+        if type(self.publication_pending) is not bool:
+            raise ValueError("publication_pending must be a boolean")
         if self.card_create_pending != (self.card_create_nonce is not None):
             raise ValueError("pending card creation must have exactly one persisted nonce")
         if self.card_message_id is not None and self.card_create_pending:

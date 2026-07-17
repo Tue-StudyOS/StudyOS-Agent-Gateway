@@ -10,7 +10,8 @@ PRs.
 Only report when there is something actionable: blocked PRs, unclear tickets,
 missing reviewers, ready implementation candidates, or a useful course-level
 coordination update. Do not start implementation unless a human explicitly asked
-the agent to implement a specific issue."""
+the agent to implement a specific issue. Do not comment, label, assign, close,
+edit, or otherwise mutate GitHub from this heartbeat."""
 status = "PAUSED"
 rrule = "FREQ=MINUTELY;INTERVAL=30"
 model = "gpt-5.6-sol"

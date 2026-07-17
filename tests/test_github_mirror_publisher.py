@@ -8,6 +8,7 @@ from typing import Any, cast
 import discord
 import pytest
 
+from study_discord_agent.github_mirror_cards import github_mirror_view
 from study_discord_agent.github_mirror_model import (
     GitHubItemKind,
     GitHubItemState,
@@ -58,16 +59,27 @@ class ForbiddenResponse:
 
 
 class FakeMessage:
-    def __init__(self, message_id: int, *, nonce: str, channel: "FakeChannel") -> None:
+    def __init__(
+        self,
+        message_id: int,
+        *,
+        nonce: str | None,
+        channel: "FakeChannel",
+        view: discord.ui.LayoutView | None = None,
+    ) -> None:
         self.id = message_id
         self.nonce = nonce
         self.author = channel.guild.me
         self.channel = channel
+        self.current_view = view
         self.edits: list[dict[str, object]] = []
         self.deleted = False
 
     async def edit(self, **kwargs: object) -> "FakeMessage":
         self.edits.append(kwargs)
+        view = kwargs.get("view")
+        if isinstance(view, discord.ui.LayoutView):
+            self.current_view = view
         return self
 
     async def delete(self) -> None:
@@ -95,14 +107,44 @@ class FakeChannel(discord.abc.Messageable):
     def permissions_for(self, _: object) -> object:
         return self._permissions
 
-    async def send(self, **kwargs: object) -> FakeMessage:  # pyright: ignore[reportIncompatibleMethodOverride]
+    async def send(  # pyright: ignore[reportIncompatibleMethodOverride]
+        self,
+        content: str | None = None,
+        *,
+        nonce: str | int | None = None,
+        view: discord.ui.LayoutView | None = None,
+        allowed_mentions: discord.AllowedMentions | None = None,
+    ) -> FakeMessage:
+        kwargs: dict[str, object] = {
+            "content": content,
+            "nonce": nonce,
+            "view": view,
+            "allowed_mentions": allowed_mentions,
+        }
         message = FakeMessage(
             100 + len(self.sent),
-            nonce=cast(str, kwargs["nonce"]),
+            nonce=cast(str | None, nonce),
             channel=self,
+            view=view,
         )
         self.messages[message.id] = message
         self.sent.append((message, kwargs))
+        return message
+
+    def seed_history(
+        self,
+        *,
+        nonce: str | None = None,
+        view: discord.ui.LayoutView | None = None,
+    ) -> FakeMessage:
+        message = FakeMessage(
+            100 + len(self.sent),
+            nonce=nonce,
+            channel=self,
+            view=view,
+        )
+        self.messages[message.id] = message
+        self.sent.append((message, {"nonce": nonce, "view": view}))
         return message
 
     async def fetch_message(self, message_id: int) -> FakeMessage:  # pyright: ignore[reportIncompatibleMethodOverride]
@@ -113,9 +155,10 @@ class FakeChannel(discord.abc.Messageable):
         return self.messages[message_id]
 
     async def history(  # pyright: ignore[reportIncompatibleMethodOverride]
-        self, *, limit: int
+        self, *, limit: int | None
     ) -> AsyncIterator[FakeMessage]:
-        for message, _ in tuple(reversed(self.sent[-limit:])):
+        candidates = self.sent if limit is None else self.sent[-limit:]
+        for message, _ in tuple(reversed(candidates)):
             if message.id in self.messages:
                 yield message
 
@@ -170,6 +213,8 @@ async def test_publish_creates_one_card_then_edits_same_logical_item(tmp_path: P
     assert len(channel.sent) == 1
     assert created.card_message_id == updated.card_message_id == duplicate.card_message_id
     assert store.get(created.mirror_id).title == "Updated"
+    assert not duplicate.publication_pending
+    assert store.pending_publication_ids() == ()
     assert len(channel.messages[cast(int, created.card_message_id)].edits) == 3
     send_kwargs = channel.sent[0][1]
     allowed = cast(discord.AllowedMentions, send_kwargs["allowed_mentions"])
@@ -282,7 +327,65 @@ async def test_precommit_attach_failure_deletes_new_orphan(tmp_path: Path) -> No
 
 
 @pytest.mark.asyncio
-async def test_missing_or_inaccessible_exact_channel_fails_before_store_write(
+async def test_crash_recovery_scans_complete_history_for_persisted_marker(
+    tmp_path: Path,
+) -> None:
+    channel = FakeChannel()
+    publisher, store = _publisher(tmp_path, channel)
+    staged = store.upsert_event(_event(), guild_id=10, channel_id=20).record
+    claimed, claim_won = store.claim_card_creation(staged.mirror_id)
+    assert claim_won and claimed.card_create_nonce is not None
+
+    original = channel.seed_history(nonce=None, view=github_mirror_view(claimed))
+    for _ in range(101):
+        channel.seed_history()
+    sent_before_recovery = len(channel.sent)
+
+    recovered = await publisher.publish(_event())
+
+    assert len(channel.sent) == sent_before_recovery
+    assert recovered.card_message_id == original.id
+    assert store.get(staged.mirror_id).card_create_pending is False
+
+
+@pytest.mark.asyncio
+async def test_crash_recovery_durably_removes_all_duplicate_marker_cards(
+    tmp_path: Path,
+) -> None:
+    channel = FakeChannel()
+    publisher, store = _publisher(tmp_path, channel)
+    staged = store.upsert_event(_event(), guild_id=10, channel_id=20).record
+    claimed, _ = store.claim_card_creation(staged.mirror_id)
+
+    canonical = channel.seed_history(nonce=None, view=github_mirror_view(claimed))
+    for _ in range(101):
+        channel.seed_history()
+    duplicate = channel.seed_history(nonce=None, view=github_mirror_view(claimed))
+
+    recovered = await publisher.publish(_event())
+
+    assert recovered.card_message_id == canonical.id
+    assert duplicate.deleted
+    assert GitHubMirrorStore(
+        tmp_path / "mirrors.json", clock=lambda: NOW
+    ).get(staged.mirror_id).card_cleanup_nonce is None
+
+
+@pytest.mark.asyncio
+async def test_staged_record_can_be_published_without_in_memory_event(tmp_path: Path) -> None:
+    channel = FakeChannel()
+    publisher, store = _publisher(tmp_path, channel)
+    staged = store.upsert_event(_event(), guild_id=10, channel_id=20).record
+
+    published = await publisher.publish_staged(staged.mirror_id)
+
+    assert published.card_message_id is not None
+    assert not published.publication_pending
+    assert store.pending_publication_ids() == ()
+
+
+@pytest.mark.asyncio
+async def test_inaccessible_channel_fails_after_staging_but_missing_config_cannot_stage(
     tmp_path: Path,
 ) -> None:
     publisher, store = _publisher(tmp_path, FakeChannel(), channel_id=None)
@@ -298,7 +401,8 @@ async def test_missing_or_inaccessible_exact_channel_fails_before_store_write(
     publisher, store = _publisher(tmp_path, FakeChannel(permissions=denied))
     with pytest.raises(GitHubMirrorChannelAccessError):
         await publisher.publish(_event("delivery-denied"))
-    assert store.records() == ()
+    assert len(store.records()) == 1
+    assert store.records()[0].publication_pending
 
 
 def test_publisher_module_has_no_execution_or_github_write_dependency() -> None:

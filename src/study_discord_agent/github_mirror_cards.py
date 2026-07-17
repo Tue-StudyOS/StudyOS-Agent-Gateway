@@ -54,6 +54,10 @@ def github_mirror_card_signature(record: GitHubMirrorRecord) -> tuple[object, ..
     )
 
 
+def github_mirror_delivery_marker(nonce: str) -> str:
+    return f"-# StudyOS delivery marker: `{nonce}`"
+
+
 def _heading(record: GitHubMirrorRecord) -> str:
     kind = "Pull request" if record.item_kind is GitHubItemKind.PULL_REQUEST else "Issue"
     return f"### {kind} #{record.item_number}: {_escape(record.title)}"
@@ -71,6 +75,9 @@ def _details(record: GitHubMirrorRecord) -> str:
         lines.append("Labels: " + ", ".join(f"`{_escape(label)}`" for label in record.labels))
     if record.item_kind is GitHubItemKind.PULL_REQUEST and record.base_ref and record.head_ref:
         lines.append(f"`{_escape(record.head_ref)}` → `{_escape(record.base_ref)}`")
+    delivery_nonce = record.card_create_nonce or record.card_cleanup_nonce
+    if delivery_nonce is not None:
+        lines.append(github_mirror_delivery_marker(delivery_nonce))
     return "\n".join(lines)
 
 

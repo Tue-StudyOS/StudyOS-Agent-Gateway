@@ -61,6 +61,11 @@ def test_automations_encode_human_gate_and_digest_schedule() -> None:
 
     assert "Do not start implementation" in triage["prompt"]
     assert "human-gated" in triage["prompt"]
+    for automation_id in EXPECTED_TEMPLATE_IDS - {"studyos-group-channel-digest"}:
+        automation = tomllib.loads(
+            (SEED_ROOT / automation_id / "automation.toml").read_text(encoding="utf-8")
+        )
+        assert "Do not comment" in automation["prompt"]
     assert weekly["rrule"] == "RRULE:FREQ=WEEKLY;BYDAY=TH;BYHOUR=16;BYMINUTE=0"
     assert group_digest["rrule"] == "RRULE:FREQ=DAILY;BYHOUR=17;BYMINUTE=0"
     assert group_digest["config"]["guild_id"] == "1501971751247024228"

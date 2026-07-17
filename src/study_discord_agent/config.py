@@ -19,24 +19,14 @@ class Settings(BaseSettings):
     discord_attachment_dir: str = "/tmp/studyos-discord-attachments"
     discord_artifact_allowed_roots: str = "/tmp/studyos-artifacts,/workspaces,/workspace"
     discord_artifact_max_bytes: int = 8_000_000
-    discord_proactive_agent_enabled: bool = False
-    discord_proactive_interval_seconds: int = 900
-    discord_proactive_recent_activity_seconds: int = 1800
-    discord_proactive_min_post_interval_seconds: int = 3600
-    discord_proactive_dry_run: bool = True
 
     agent_webhook_url: str | None = None
     agent_command: str | None = None
     agent_workdir: str | None = None
     agent_timeout_seconds: int = 900
-    agent_auto_review_enabled: bool = False
     agent_channel_sessions_enabled: bool = True
     agent_session_store_path: str | None = None
     agent_discord_worktree_root: str | None = "/workspaces/.studyos-discord-worktrees"
-
-    github_poll_enabled: bool = False
-    github_poll_interval_seconds: int = 1800
-    github_poll_limit: int = 20
 
     host: str = "0.0.0.0"
     port: int = 8080

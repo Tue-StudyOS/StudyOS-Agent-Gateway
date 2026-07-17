@@ -13,7 +13,7 @@ from study_discord_agent.github_mirror_channel import (
     MirrorChannel,
     MirrorChannelClient,
     MirrorMessage,
-    find_bot_nonce_messages,
+    find_bot_delivery_messages,
     resolve_mirror_channel,
 )
 from study_discord_agent.github_mirror_model import GitHubMirrorEvent, GitHubMirrorRecord
@@ -44,23 +44,42 @@ class GitHubMirrorPublisher:
         self._channel_id = channel_id
 
     async def publish(self, event: GitHubMirrorEvent) -> GitHubMirrorRecord:
-        channel = await resolve_mirror_channel(
-            self._client,
-            guild_id=self._guild_id,
-            channel_id=self._channel_id,
-        )
-        assert self._guild_id is not None
-        assert self._channel_id is not None
+        if self._guild_id is None or self._channel_id is None:
+            raise GitHubMirrorConfigurationError(
+                "DISCORD_GUILD_ID and DISCORD_PR_CHANNEL_ID are required for GitHub mirrors"
+            )
         upsert = self._store.upsert_event(
             event,
             guild_id=self._guild_id,
             channel_id=self._channel_id,
         )
-        record = upsert.record
+        return await self.publish_staged(upsert.record.mirror_id)
+
+    async def publish_staged(self, mirror_id: str) -> GitHubMirrorRecord:
+        record = self._store.get(mirror_id)
+        if (record.guild_id, record.channel_id) != (self._guild_id, self._channel_id):
+            raise GitHubMirrorConfigurationError(
+                "Persisted GitHub mirror destination does not match this publisher"
+            )
+        channel = await resolve_mirror_channel(
+            self._client,
+            guild_id=self._guild_id,
+            channel_id=self._channel_id,
+        )
         try:
-            if record.card_message_id is None:
-                return await self._create_card(channel, record)
-            return await self._finish_attached_card(channel, record)
+            for _ in range(_RECONCILE_ATTEMPTS):
+                record = self._store.get(mirror_id)
+                if record.card_message_id is None:
+                    delivered = await self._create_card(channel, record)
+                else:
+                    delivered = await self._finish_attached_card(channel, record)
+                completed = self._store.complete_publication(
+                    mirror_id,
+                    delivered.revision,
+                )
+                if not completed.publication_pending:
+                    return completed
+            raise RuntimeError("GitHub mirror publication did not reach a stable revision")
         except Exception:
             logger.exception("GitHub mirror publication failed mirror_id=%s", record.mirror_id)
             raise
@@ -75,7 +94,7 @@ class GitHubMirrorPublisher:
         if nonce is None:
             raise RuntimeError("pending Discord mirror card creation has no nonce")
         if not claimed:
-            matches = await find_bot_nonce_messages(channel, nonce)
+            matches = await find_bot_delivery_messages(channel, nonce)
             if matches:
                 return await self._attach_created_cards(channel, matches, record)
         try:
@@ -83,7 +102,6 @@ class GitHubMirrorPublisher:
                 content=None,
                 view=github_mirror_view(record),
                 nonce=nonce,
-                enforce_nonce=True,
                 allowed_mentions=discord.AllowedMentions.none(),
             )
         except discord.Forbidden as error:
@@ -92,7 +110,7 @@ class GitHubMirrorPublisher:
                 "Configured Discord PR channel is inaccessible"
             ) from error
         except discord.HTTPException:
-            matches = await find_bot_nonce_messages(channel, nonce)
+            matches = await find_bot_delivery_messages(channel, nonce)
             if matches:
                 return await self._attach_created_cards(channel, matches, record)
             raise
@@ -224,7 +242,7 @@ class GitHubMirrorPublisher:
         *,
         keep_message_id: int | None,
     ) -> None:
-        matches = await find_bot_nonce_messages(channel, nonce)
+        matches = await find_bot_delivery_messages(channel, nonce)
         for candidate in matches:
             if candidate.id == keep_message_id:
                 continue

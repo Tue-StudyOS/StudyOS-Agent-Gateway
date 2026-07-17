@@ -101,19 +101,13 @@ class _Channel(discord.abc.Messageable):
     async def send(self, **kwargs: object) -> _Message:  # pyright: ignore[reportIncompatibleMethodOverride]
         self.send_calls += 1
         nonce = cast(str | int | None, kwargs.get("nonce"))
-        existing = next(
-            (message for message in self.messages.values() if message.nonce == nonce),
-            None,
-        )
-        if existing is not None:
-            return existing
         message = _Message(
             100 + self.send_calls,
             nonce=nonce,
             channel=self,
         )
         self.messages[message.id] = message
-        if self.ambiguous_send:
+        if self.ambiguous_send and self.send_calls == 1:
             raise discord.HTTPException(cast(Any, _Response()), "ambiguous create")
         return message
 
@@ -121,12 +115,11 @@ class _Channel(discord.abc.Messageable):
         return self.messages[message_id]
 
     async def history(  # pyright: ignore[reportIncompatibleMethodOverride]
-        self, *, limit: int
+        self, *, limit: int | None
     ) -> AsyncIterator[_Message]:
         if self.expose_history:
-            for message in sorted(self.messages.values(), key=lambda item: item.id, reverse=True)[
-                :limit
-            ]:
+            messages = sorted(self.messages.values(), key=lambda item: item.id, reverse=True)
+            for message in messages if limit is None else messages[:limit]:
                 yield message
 
 
@@ -200,7 +193,7 @@ async def test_unresolved_ambiguous_create_is_idempotently_resent(tmp_path: Path
     recovered = await restarted.publish(_event("later", action="edited"))
 
     assert channel.send_calls == 2
-    assert recovered.card_message_id == 101
+    assert recovered.card_message_id == 102
 
 
 def test_equal_timestamp_ready_state_cannot_regress_to_draft(tmp_path: Path) -> None:

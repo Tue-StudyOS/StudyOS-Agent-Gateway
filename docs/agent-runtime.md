@@ -119,15 +119,6 @@ Graphviz and the helper CLI:
 studyos-render-diagram --input /tmp/studyos-artifacts/flow.dot --output /tmp/studyos-artifacts/flow.png
 ```
 
-The proactive Discord monitor is disabled by default. When enabled, it only
-considers private `group-*` channels and their threads. A deterministic gate
-requires a settled, unanswered technical blocker; recent bot activity, ordinary
-conversation, summaries, cheerleading, and generic next-step suggestions are
-silenced before the agent can post. The agent must then return a strict JSON
-decision, and any post is limited to 500 characters and four lines with no code
-block. Keep `DISCORD_PROACTIVE_DRY_RUN=true` until behavior is trusted in a real
-course server.
-
 ## Channel Sessions
 
 When `AGENT_CHANNEL_SESSIONS_ENABLED=true` and `AGENT_COMMAND` is a Codex
@@ -150,8 +141,8 @@ This keeps the follow-up in the active model turn and prevents a second response
 handler. The initiating user can also steer with an unmentioned message while that
 exact channel task remains active. An unmentioned message cannot wake an idle
 session, start a later turn, or steer another user's task. Stop requests use
-`turn/interrupt`. Different channels can run in parallel. GitHub poller and
-webhook-triggered runs continue to use the configured one-shot command path.
+`turn/interrupt`. Different channels can run in parallel. Passive GitHub
+webhook delivery does not start an agent command.
 
 The gateway also creates one editable Discord Components V2 progress card for each
 active turn. It mirrors structured `turn/plan/updated` steps as a bounded checklist
@@ -225,45 +216,28 @@ Expected response:
 {"message": "summary to post back to Discord"}
 ```
 
-## Automatic GitHub Follow-Up
+## Passive GitHub Mirrors
 
-Set `AGENT_AUTO_REVIEW_ENABLED=true` to run the agent for useful GitHub webhook events.
-`DISCORD_PR_CHANNEL_ID` is optional for this path; without it, the webhook only
-invokes the agent and the agent should use GitHub as the primary response
-surface. With a channel configured, the gateway also mirrors webhook
-notifications and agent summaries into Discord.
-
-The generated prompts ask for PR review summaries, issue refinement questions, duplicate detection, and next steps. They explicitly tell the agent not to merge pull requests. GitHub write access should still be controlled by:
-
-- `gh auth login` scopes
-- branch protection
-- human-only merge policy
-
-Implementation is human-gated. The gateway can help refine an issue until it is ready, but branch or PR creation should start only after a student explicitly asks the agent to implement a specific issue in Discord or in a GitHub issue comment.
+Signed GitHub webhook events are staged durably and reconciled into one Discord
+card per issue or pull request. Webhook delivery does not invoke the configured
+agent or perform any GitHub write. Review, security review, scan, and
+implementation actions begin only after a Discord user clicks the corresponding
+card action.
 
 ## Cron And Scheduled Work
 
-For this repo, prefer the built-in GitHub poller first:
-
-```bash
-GITHUB_POLL_ENABLED=true
-GITHUB_POLL_INTERVAL_SECONDS=1800
-```
-
-Use host cron, systemd timers, GitHub Actions, or a separate scheduler container only for jobs that should run independently from the bot process.
-
-Codex-managed automations are a good fit for detached StudyOS repository maintenance. In that setup, the bot handles Discord and webhook intake, while a Codex cron job runs every 15 or 30 minutes and prompts Codex to inspect the StudyOS course monorepo with `gh`:
+The gateway does not launch periodic GitHub work. Seeded Codex automation
+templates are paused and belong to a separate automation runner. If one is
+explicitly activated, keep it report-only and require a later human action for
+GitHub mutations:
 
 ```text
 Use the authenticated GitHub CLI to inspect open issues, pull requests,
 and recent review comments in owner/repo. Identify duplicates, blocked
-threads, stale PRs, and implementation candidates. Comment only when
-there is a useful update. Do not create branches or PRs from unattended
-automation; wait until a human explicitly asks the agent to implement a
-specific issue. Never merge pull requests.
+threads, stale PRs, and implementation candidates. Do not post comments,
+change labels, create branches or PRs, or otherwise mutate GitHub. Wait until a
+human explicitly asks the agent to act. Never merge pull requests.
 ```
-
-For StudyOS, prefer this simpler Codex automation when it is enough. Webhooks are only needed for low-latency updates into Discord or immediate issue-refinement prompts. The bot-side poller remains useful when the result should post into Discord or reuse the same agent command configured for Discord mentions.
 
 ## Authentication Model
 
@@ -297,4 +271,5 @@ docker compose -f docker-compose.agent.yml exec studyos-agent-gateway gh auth lo
 docker compose -f docker-compose.agent.yml exec studyos-agent-gateway codex login
 ```
 
-After that, Discord mentions, GitHub webhooks, and the GitHub poller can invoke the authenticated tools without embedding tokens in the image.
+After that, explicit Discord tasks can invoke the authenticated tools without
+embedding tokens in the image. GitHub webhook delivery remains passive.

@@ -1,4 +1,5 @@
 import json
+from base64 import urlsafe_b64encode
 from collections.abc import Mapping
 from dataclasses import asdict
 from typing import cast
@@ -13,7 +14,8 @@ from study_discord_agent.github_mirror_model import (
     GitHubPendingAction,
 )
 
-STORE_VERSION = 1
+STORE_VERSION = 2
+_LEGACY_VERSION = 1
 
 
 def encode_document(records: Mapping[str, GitHubMirrorRecord]) -> str:
@@ -25,10 +27,14 @@ def decode_document(document: str) -> dict[str, GitHubMirrorRecord]:
     raw: object = json.loads(document, object_pairs_hook=_unique_object)
     data = _mapping(raw, "document")
     _exact_keys(data, {"version", "mirrors"}, "document")
-    if _integer(data, "version") != STORE_VERSION:
+    version = _integer(data, "version")
+    if version not in {_LEGACY_VERSION, STORE_VERSION}:
         raise ValueError("unsupported version")
     mirrors = _mapping(data["mirrors"], "mirrors")
-    records = {mirror_id: _decode_record(value) for mirror_id, value in mirrors.items()}
+    records = {
+        mirror_id: _decode_record(value, version=version)
+        for mirror_id, value in mirrors.items()
+    }
     if any(mirror_id != record.mirror_id for mirror_id, record in records.items()):
         raise ValueError("mirror key does not match record")
     if len({record.logical_key for record in records.values()}) != len(records):
@@ -54,9 +60,30 @@ def _encode_record(record: GitHubMirrorRecord) -> dict[str, object]:
     return cast(dict[str, object], payload)
 
 
-def _decode_record(raw: object) -> GitHubMirrorRecord:
+def _decode_record(raw: object, *, version: int) -> GitHubMirrorRecord:
     data = _mapping(raw, "record")
-    _exact_keys(data, set(GitHubMirrorRecord.__dataclass_fields__), "record")
+    fields = set(GitHubMirrorRecord.__dataclass_fields__)
+    if version == STORE_VERSION:
+        _exact_keys(data, fields, "record")
+        create_nonce = _optional_string(data, "card_create_nonce")
+        cleanup_nonce = _optional_string(data, "card_cleanup_nonce")
+        publication_pending = _boolean(data, "publication_pending")
+    else:
+        current_v1_fields = fields - {"publication_pending"}
+        old_v1_fields = current_v1_fields - {"card_create_nonce", "card_cleanup_nonce"}
+        if set(data) == current_v1_fields:
+            create_nonce = _optional_string(data, "card_create_nonce")
+            cleanup_nonce = _optional_string(data, "card_cleanup_nonce")
+        elif set(data) == old_v1_fields:
+            create_nonce = (
+                _legacy_creation_nonce(_string(data, "mirror_id"))
+                if _boolean(data, "card_create_pending")
+                else None
+            )
+            cleanup_nonce = None
+        else:
+            raise ValueError("record has unexpected fields")
+        publication_pending = True
     pending_raw = data["pending_action"]
     pending = None if pending_raw is None else _decode_pending(pending_raw)
     claims_raw = _list(data, "handled_interaction_claims")
@@ -69,8 +96,9 @@ def _decode_record(raw: object) -> GitHubMirrorRecord:
         channel_id=_integer(data, "channel_id"),
         card_message_id=_optional_integer(data, "card_message_id"),
         card_create_pending=_boolean(data, "card_create_pending"),
-        card_create_nonce=_optional_string(data, "card_create_nonce"),
-        card_cleanup_nonce=_optional_string(data, "card_cleanup_nonce"),
+        card_create_nonce=create_nonce,
+        card_cleanup_nonce=cleanup_nonce,
+        publication_pending=publication_pending,
         thread_id=_optional_integer(data, "thread_id"),
         repository_full_name=_string(data, "repository_full_name"),
         item_kind=GitHubItemKind(_string(data, "item_kind")),
@@ -93,6 +121,11 @@ def _decode_record(raw: object) -> GitHubMirrorRecord:
         created_at=_string(data, "created_at"),
         updated_at=_string(data, "updated_at"),
     )
+
+
+def _legacy_creation_nonce(mirror_id: str) -> str:
+    encoded = urlsafe_b64encode(bytes.fromhex(mirror_id)).decode().rstrip("=")
+    return f"gm:{encoded}"
 
 
 def _decode_pending(raw: object) -> GitHubPendingAction:

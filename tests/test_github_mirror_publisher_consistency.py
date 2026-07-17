@@ -142,9 +142,10 @@ class FakeChannel(discord.abc.Messageable):
         return cast(discord.Message, self.messages[message_id])
 
     async def history(  # pyright: ignore[reportIncompatibleMethodOverride]
-        self, *, limit: int
+        self, *, limit: int | None
     ) -> AsyncIterator[FakeMessage | CoordinatedMessage]:
-        for message in tuple(reversed(self.sent[-limit:])):
+        candidates = self.sent if limit is None else self.sent[-limit:]
+        for message in tuple(reversed(candidates)):
             if message.id in self.messages:
                 yield message
 

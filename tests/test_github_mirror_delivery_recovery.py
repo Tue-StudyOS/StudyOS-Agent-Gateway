@@ -64,7 +64,7 @@ class _Message:
         self,
         message_id: int,
         *,
-        nonce: str,
+        nonce: str | None,
         view: discord.ui.LayoutView,
         channel: "_Channel",
         delete_failures: int = 0,
@@ -94,7 +94,6 @@ class _Channel(discord.abc.Messageable):
         self.guild = SimpleNamespace(id=10, me=SimpleNamespace(id=99))
         self.messages: dict[int, _Message] = {}
         self.sent_nonces: list[str] = []
-        self.deleted_nonces: set[str] = set()
 
     async def _get_channel(self) -> "_Channel":  # pyright: ignore[reportIncompatibleMethodOverride]
         return self
@@ -106,19 +105,22 @@ class _Channel(discord.abc.Messageable):
             read_message_history=True,
         )
 
-    async def send(self, **kwargs: object) -> _Message:  # pyright: ignore[reportIncompatibleMethodOverride]
-        nonce = cast(str, kwargs["nonce"])
-        assert kwargs["enforce_nonce"] is True
+    async def send(  # pyright: ignore[reportIncompatibleMethodOverride]
+        self,
+        content: str | None = None,
+        *,
+        nonce: str | int | None = None,
+        view: discord.ui.LayoutView | None = None,
+        allowed_mentions: discord.AllowedMentions | None = None,
+    ) -> _Message:
+        del content, allowed_mentions
+        assert isinstance(nonce, str)
+        assert view is not None
         self.sent_nonces.append(nonce)
-        if nonce in self.deleted_nonces:
-            raise discord.NotFound(cast(Any, _Response()), "recently deleted nonce")
-        existing = next((item for item in self.messages.values() if item.nonce == nonce), None)
-        if existing is not None:
-            return existing
         message = _Message(
             100 + len(self.sent_nonces),
             nonce=nonce,
-            view=cast(discord.ui.LayoutView, kwargs["view"]),
+            view=view,
             channel=self,
         )
         self.messages[message.id] = message
@@ -131,16 +133,14 @@ class _Channel(discord.abc.Messageable):
             raise discord.NotFound(cast(Any, _Response()), "missing") from None
 
     async def history(  # pyright: ignore[reportIncompatibleMethodOverride]
-        self, *, limit: int
+        self, *, limit: int | None
     ) -> AsyncIterator[_Message]:
-        for message in sorted(self.messages.values(), key=lambda item: item.id, reverse=True)[
-            :limit
-        ]:
+        messages = sorted(self.messages.values(), key=lambda item: item.id, reverse=True)
+        for message in messages if limit is None else messages[:limit]:
             yield message
 
     def externally_delete(self, message_id: int) -> None:
-        message = self.messages.pop(message_id)
-        self.deleted_nonces.add(message.nonce)
+        self.messages.pop(message_id)
 
 
 class _Client:

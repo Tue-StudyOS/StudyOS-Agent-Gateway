@@ -3,7 +3,7 @@ from typing import Protocol, cast
 
 import discord
 
-CREATE_SEARCH_LIMIT = 100
+from study_discord_agent.github_mirror_cards import github_mirror_delivery_marker
 
 
 class GitHubMirrorConfigurationError(RuntimeError):
@@ -48,11 +48,18 @@ class MirrorChannel(Protocol):
 
     def permissions_for(self, member: object) -> _Permissions: ...
 
-    def send(self, **kwargs: object) -> Awaitable[MirrorMessage]: ...
+    def send(
+        self,
+        content: str | None = None,
+        *,
+        nonce: str | int | None = None,
+        view: discord.ui.LayoutView | None = None,
+        allowed_mentions: discord.AllowedMentions | None = None,
+    ) -> Awaitable[MirrorMessage]: ...
 
     def fetch_message(self, message_id: int) -> Awaitable[MirrorMessage]: ...
 
-    def history(self, *, limit: int) -> AsyncIterator[MirrorMessage]: ...
+    def history(self, *, limit: int | None) -> AsyncIterator[MirrorMessage]: ...
 
 
 async def resolve_mirror_channel(
@@ -105,19 +112,55 @@ async def resolve_mirror_channel(
     return channel
 
 
-async def find_bot_nonce_messages(channel: MirrorChannel, nonce: str) -> tuple[MirrorMessage, ...]:
+async def find_bot_delivery_messages(
+    channel: MirrorChannel, nonce: str
+) -> tuple[MirrorMessage, ...]:
     member = channel.guild.me
     member_id = getattr(member, "id", None)
     if type(member_id) is not int or member_id <= 0:
         raise GitHubMirrorChannelAccessError("Discord bot guild membership is unavailable")
     matches: list[MirrorMessage] = []
     try:
-        async for message in channel.history(limit=CREATE_SEARCH_LIMIT):
+        async for message in channel.history(limit=None):
             author_id = getattr(message.author, "id", None)
-            if author_id == member_id and message.nonce == nonce:
+            if author_id == member_id and _has_delivery_marker(message, nonce):
                 matches.append(message)
     except discord.Forbidden as error:
         raise GitHubMirrorChannelAccessError(
             "Configured Discord PR channel is inaccessible"
         ) from error
     return tuple(matches)
+
+
+def _has_delivery_marker(message: MirrorMessage, nonce: str) -> bool:
+    if message.nonce == nonce:
+        return True
+    marker = github_mirror_delivery_marker(nonce)
+    candidates = (
+        getattr(message, "current_view", None),
+        getattr(message, "components", None),
+    )
+    return any(_component_contains(candidate, marker) for candidate in candidates)
+
+
+def _component_contains(root: object, marker: str) -> bool:
+    pending = [root]
+    seen: set[int] = set()
+    while pending:
+        candidate = pending.pop()
+        if candidate is None or id(candidate) in seen:
+            continue
+        seen.add(id(candidate))
+        content = getattr(candidate, "content", None)
+        if isinstance(content, str) and marker in content:
+            return True
+        if isinstance(candidate, (list, tuple)):
+            pending.extend(cast(list[object] | tuple[object, ...], candidate))
+            continue
+        children = getattr(candidate, "children", None)
+        if isinstance(children, (list, tuple)):
+            pending.extend(cast(list[object] | tuple[object, ...], children))
+        components = getattr(candidate, "components", None)
+        if isinstance(components, (list, tuple)):
+            pending.extend(cast(list[object] | tuple[object, ...], components))
+    return False

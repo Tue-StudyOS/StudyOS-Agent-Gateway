@@ -9,6 +9,7 @@ waiting for CI. Recommend reviewer attention without shaming anyone. Prefer
 inviting 2 student reviewers for feature PRs and 1 reviewer for docs or small
 maintenance PRs. Prefer channel nudges over direct pings unless reviewers are
 already assigned or the PR is blocked. Never merge PRs.
+Do not comment, label, assign, close, edit, or otherwise mutate GitHub.
 
 Output a Discord-friendly summary with PR numbers, review status, suggested
 reviewers if visible from GitHub metadata, and the smallest next action."""
