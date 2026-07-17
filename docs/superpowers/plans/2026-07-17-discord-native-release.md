@@ -91,9 +91,12 @@ git commit -m "test(runtime): smoke the pinned Codex app server"
 - Modify: `src/study_discord_agent/github_events.py`
 - Modify: `src/study_discord_agent/discord_bot.py`
 - Modify: `src/study_discord_agent/config.py`
+- Modify: `src/study_discord_agent/main.py`
+- Modify: `src/study_discord_agent/triage.py`
 - Modify: `.env.example`
 - Modify: `tests/test_github_events.py`
 - Modify: `tests/test_discord_bot.py`
+- Modify: `tests/test_triage.py`
 - Modify: `README.md`
 - Modify: `docs/agent-runtime.md`
 
@@ -102,7 +105,9 @@ git commit -m "test(runtime): smoke the pinned Codex app server"
   `agent_prompt` is `None`. Assert webhook publication never calls `AgentGateway`, starts
   a task, or emits a GitHub write when a stale deployment environment still has
   `AGENT_AUTO_REVIEW_ENABLED=true`. Add a failing configuration assertion that the obsolete
-  setting is no longer part of `Settings`.
+  setting is no longer part of `Settings`. Assert the legacy periodic GitHub triage path
+  cannot instruct the agent to comment, create a branch, or open a pull request under the
+  authenticated user's identity, even when a stale deployment still enables polling.
 - [ ] **Step 2: Test the four explicit intake defaults**. Review is read-only correctness,
   Security review is read-only auth/secrets/permissions/privacy/abuse analysis,
   Vulnerability scan is isolated local SAST/dependency analysis without active probing,
@@ -115,13 +120,15 @@ git commit -m "test(runtime): smoke the pinned Codex app server"
   should fail.
 - [ ] **Step 4: Remove all automatic webhook agent prompts and the
   `AGENT_AUTO_REVIEW_ENABLED` setting** from runtime configuration, examples, and docs so
-  an old environment variable cannot re-enable the behavior. Preserve passive PR/issue
-  card upserts and explicit interaction/mention intake only.
+  an old environment variable cannot re-enable the behavior. Retire the periodic agent
+  triage execution path and its write-capable prompt; a stale `GITHUB_POLL_ENABLED=true`
+  must not run an agent or comment through the authenticated personal account. Preserve
+  passive PR/issue card upserts and explicit interaction/mention intake only.
 - [ ] **Step 5: Rerun focused tests** and expect PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/study_discord_agent/github_events.py src/study_discord_agent/discord_bot.py src/study_discord_agent/config.py .env.example tests/test_github_events.py tests/test_discord_bot.py README.md docs/agent-runtime.md
+git add src/study_discord_agent/github_events.py src/study_discord_agent/discord_bot.py src/study_discord_agent/config.py src/study_discord_agent/main.py src/study_discord_agent/triage.py .env.example tests/test_github_events.py tests/test_discord_bot.py tests/test_triage.py README.md docs/agent-runtime.md
 git commit -m "fix(github): keep webhook intake passive"
 ```
 
