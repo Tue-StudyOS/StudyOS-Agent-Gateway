@@ -1,5 +1,6 @@
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import discord
@@ -28,8 +29,8 @@ def _bot(tmp_path: Path, *, guild_id: int | None = None) -> StudyBot:
     return StudyBot(
         _settings(tmp_path, guild_id=guild_id),
         cast(Any, object()),
-        cast(Any, object()),
         asyncio.Queue(),
+        cast(Any, SimpleNamespace(pending_publication_ids=lambda: ())),
     )
 
 
@@ -64,6 +65,7 @@ async def test_commands_dynamic_item_and_sync_scope_are_registered(
     monkeypatch.setattr(bot.tree, "sync", sync)
     monkeypatch.setattr(bot.tree, "clear_commands", forbidden_clear)
     monkeypatch.setattr(bot, "_notification_worker", no_worker)
+    monkeypatch.setattr(bot, "_publication_reconciler", no_worker)
     monkeypatch.setattr(bot, "wait_until_ready", no_worker)
     reconciled = 0
 
