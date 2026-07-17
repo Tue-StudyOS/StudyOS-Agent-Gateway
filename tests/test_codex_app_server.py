@@ -7,6 +7,7 @@ import pytest
 from study_discord_agent.codex_app_server import CodexAppServerClient
 from study_discord_agent.codex_app_server_protocol import (
     AppServerNotification,
+    AppServerProcessError,
     AppServerProtocolError,
     AppServerRpcError,
 )
@@ -166,6 +167,36 @@ async def test_invalid_json_fails_initialization_and_closes_process() -> None:
         await client.start()
 
     await client.close()
+
+
+@pytest.mark.asyncio
+async def test_transport_exit_notification_preserves_process_error() -> None:
+    script = r"""
+import json
+import sys
+
+request = json.loads(sys.stdin.readline())
+print(json.dumps({"id": request["id"], "result": {
+    "userAgent": "codex-test/1", "platformFamily": "unix",
+    "platformOs": "linux", "codexHome": "/tmp/codex",
+}}), flush=True)
+sys.stdin.readline()
+"""
+    exited = asyncio.Event()
+    notifications: list[AppServerNotification] = []
+
+    async def handle(notification: AppServerNotification) -> None:
+        notifications.append(notification)
+        if notification.method == "app-server/exited":
+            exited.set()
+
+    client = CodexAppServerClient(_command(script))
+    client.subscribe(handle)
+    await client.start()
+    await asyncio.wait_for(exited.wait(), timeout=1)
+    await client.close()
+
+    assert isinstance(notifications[-1].error, AppServerProcessError)
 
 
 @pytest.mark.asyncio

@@ -5,9 +5,17 @@ from typing import cast
 
 import pytest
 
+from study_discord_agent.agent_errors import (
+    AgentRuntimeDisconnected,
+    AgentRuntimeIncompatible,
+    AgentTurnTimedOut,
+)
 from study_discord_agent.codex_app_server import CodexAppServerClient
 from study_discord_agent.codex_app_server_protocol import (
     AppServerNotification,
+    AppServerProcessError,
+    AppServerProtocolError,
+    AppServerRpcError,
     JsonObject,
     NotificationHandler,
     ThreadRef,
@@ -32,8 +40,14 @@ class FakeAppServerClient:
         self.interrupted_turns: list[tuple[str, str]] = []
         self.turn_started = asyncio.Event()
         self.complete_during_start = False
+        self.exit_during_start = False
+        self.close_calls = 0
+        self.start_error: BaseException | None = None
+        self.resume_error: BaseException | None = None
 
     async def start(self) -> object:
+        if self.start_error:
+            raise self.start_error
         self.started += 1
         return object()
 
@@ -47,6 +61,8 @@ class FakeAppServerClient:
 
     async def resume_thread(self, thread_id: str, **_: object) -> ThreadRef:
         self.resumed_threads.append(thread_id)
+        if self.resume_error:
+            raise self.resume_error
         return ThreadRef(thread_id)
 
     async def start_turn(
@@ -58,6 +74,8 @@ class FakeAppServerClient:
     ) -> TurnRef:
         self.started_turns.append((thread_id, prompt, tuple(local_images)))
         self.turn_started.set()
+        if self.exit_during_start:
+            await self.emit_exit(AppServerProcessError("process exited"))
         if self.complete_during_start:
             await self.emit(
                 "item/completed",
@@ -91,17 +109,41 @@ class FakeAppServerClient:
         self.interrupted_turns.append((thread_id, turn_id))
 
     async def close(self) -> None:
-        return None
+        self.close_calls += 1
 
     async def emit(self, method: str, params: JsonObject) -> None:
         notification = AppServerNotification(method, params)
         for handler in tuple(self.handlers):
             await handler(notification)
 
+    async def emit_exit(self, error: BaseException | None = None) -> None:
+        notification = AppServerNotification("app-server/exited", {}, error)
+        for handler in tuple(self.handlers):
+            await handler(notification)
+
+
+class FakeClientFactory:
+    def __init__(self, clients: list[FakeAppServerClient]) -> None:
+        self._clients = clients
+        self.calls = 0
+
+    def __call__(self) -> CodexAppServerClient:
+        client = self._clients[self.calls]
+        self.calls += 1
+        return cast(CodexAppServerClient, client)
+
 
 def _runtime(tmp_path: Path, client: FakeAppServerClient) -> CodexAppServerRuntime:
     return CodexAppServerRuntime(
         cast(CodexAppServerClient, client),
+        ChannelSessionStore(tmp_path / "sessions.json"),
+        turn_timeout_seconds=2,
+    )
+
+
+def _factory_runtime(tmp_path: Path, factory: FakeClientFactory) -> CodexAppServerRuntime:
+    return CodexAppServerRuntime(
+        factory,
         ChannelSessionStore(tmp_path / "sessions.json"),
         turn_timeout_seconds=2,
     )
@@ -234,6 +276,21 @@ async def test_interrupt_uses_active_turn_and_resolves_run(tmp_path: Path) -> No
 
 
 @pytest.mark.asyncio
+async def test_turn_timeout_interrupts_and_raises_typed_error(tmp_path: Path) -> None:
+    client = FakeAppServerClient()
+    runtime = CodexAppServerRuntime(
+        cast(CodexAppServerClient, client),
+        ChannelSessionStore(tmp_path / "sessions.json"),
+        turn_timeout_seconds=0.01,
+    )
+
+    with pytest.raises(AgentTurnTimedOut):
+        await runtime.run(channel_id=123, prompt="first", cwd=tmp_path)
+
+    assert client.interrupted_turns == [("thread-1", "turn-1")]
+
+
+@pytest.mark.asyncio
 async def test_existing_channel_thread_is_resumed(tmp_path: Path) -> None:
     client = FakeAppServerClient()
     store = ChannelSessionStore(tmp_path / "sessions.json")
@@ -275,7 +332,177 @@ async def test_server_exit_fails_active_turn_immediately(tmp_path: Path) -> None
     task = asyncio.create_task(runtime.run(channel_id=123, prompt="one", cwd=tmp_path))
     await _wait_active(client)
 
-    await client.emit("app-server/exited", {"message": "process exited"})
+    exit_error = AppServerProcessError("process exited")
+    await client.emit_exit(exit_error)
 
-    with pytest.raises(RuntimeError, match="process exited"):
+    with pytest.raises(AgentRuntimeDisconnected) as exc_info:
         await task
+    assert exc_info.value.__cause__ is exit_error
+
+
+@pytest.mark.asyncio
+async def test_exit_during_turn_start_fails_without_waiting_for_timeout(tmp_path: Path) -> None:
+    client = FakeAppServerClient()
+    client.exit_during_start = True
+    runtime = _runtime(tmp_path, client)
+
+    with pytest.raises(AgentRuntimeDisconnected):
+        await asyncio.wait_for(runtime.run(channel_id=1, prompt="one", cwd=tmp_path), timeout=0.1)
+
+
+@pytest.mark.asyncio
+async def test_exit_does_not_recover_to_steer_or_interrupt_the_old_turn(tmp_path: Path) -> None:
+    first_client = FakeAppServerClient()
+    replacement = FakeAppServerClient()
+    factory = FakeClientFactory([first_client, replacement])
+    runtime = _factory_runtime(tmp_path, factory)
+    task = asyncio.create_task(runtime.run(channel_id=1, prompt="one", cwd=tmp_path))
+    await _wait_active(first_client)
+
+    await first_client.emit_exit(AppServerProcessError("process exited"))
+
+    assert await runtime.steer(channel_id=1, prompt="later") is SteerResult.NO_ACTIVE_TURN
+    assert not await runtime.interrupt(1)
+    assert factory.calls == 1
+    with pytest.raises(AgentRuntimeDisconnected):
+        await task
+
+
+@pytest.mark.asyncio
+async def test_close_clears_active_generation_state(tmp_path: Path) -> None:
+    client = FakeAppServerClient()
+    runtime = _runtime(tmp_path, client)
+    task = asyncio.create_task(runtime.run(channel_id=1, prompt="one", cwd=tmp_path))
+    await _wait_active(client)
+
+    await runtime.close()
+
+    assert not await runtime.has_active_turn(1)
+    with pytest.raises(AgentRuntimeDisconnected):
+        await task
+
+
+@pytest.mark.asyncio
+async def test_exit_fails_all_turns_and_concurrent_retry_uses_one_client(tmp_path: Path) -> None:
+    first_client = FakeAppServerClient()
+    replacement = FakeAppServerClient()
+    replacement.complete_during_start = True
+    factory = FakeClientFactory([first_client, replacement])
+    runtime = _factory_runtime(tmp_path, factory)
+
+    first = asyncio.create_task(runtime.run(channel_id=1, prompt="one", cwd=tmp_path))
+    second = asyncio.create_task(runtime.run(channel_id=2, prompt="two", cwd=tmp_path))
+    for _ in range(100):
+        if len(first_client.started_turns) == 2:
+            break
+        await asyncio.sleep(0.01)
+
+    await first_client.emit_exit()
+
+    with pytest.raises(AgentRuntimeDisconnected):
+        await first
+    with pytest.raises(AgentRuntimeDisconnected):
+        await second
+
+    resumed = await asyncio.gather(
+        runtime.run(channel_id=1, prompt="retry", cwd=tmp_path),
+        runtime.run(channel_id=2, prompt="retry", cwd=tmp_path),
+    )
+
+    assert [result.message for result in resumed] == ["fast result", "fast result"]
+    assert factory.calls == 2
+    assert sorted(replacement.resumed_threads) == ["thread-1", "thread-2"]
+    assert first_client.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_stale_generation_notifications_do_not_complete_recovered_turn(
+    tmp_path: Path,
+) -> None:
+    first_client = FakeAppServerClient()
+    first_client.complete_during_start = True
+    replacement = FakeAppServerClient()
+    factory = FakeClientFactory([first_client, replacement])
+    runtime = _factory_runtime(tmp_path, factory)
+
+    await runtime.run(channel_id=1, prompt="first", cwd=tmp_path)
+    stale_handler = first_client.handlers[0]
+    await first_client.emit_exit(AppServerProcessError("process exited"))
+    retry = asyncio.create_task(runtime.run(channel_id=1, prompt="retry", cwd=tmp_path))
+    await _wait_active(replacement)
+
+    await stale_handler(
+        AppServerNotification(
+            "turn/completed",
+            {"threadId": "thread-1", "turn": {"id": "turn-1", "status": "completed"}},
+        )
+    )
+
+    assert not retry.done()
+    await _complete(replacement, "thread-1", "replacement result")
+    assert (await retry).message == "replacement result"
+
+
+@pytest.mark.asyncio
+async def test_failed_recovery_never_starts_one_shot_or_new_thread(tmp_path: Path) -> None:
+    first_client = FakeAppServerClient()
+    first_client.complete_during_start = True
+    replacement = FakeAppServerClient()
+    replacement.resume_error = AppServerProcessError("connection lost")
+    factory = FakeClientFactory([first_client, replacement])
+    runtime = _factory_runtime(tmp_path, factory)
+
+    await runtime.run(channel_id=1, prompt="first", cwd=tmp_path)
+    await first_client.emit_exit()
+
+    with pytest.raises(AgentRuntimeDisconnected):
+        await runtime.run(channel_id=1, prompt="retry", cwd=tmp_path)
+
+    assert replacement.resumed_threads == ["thread-1"]
+    assert replacement.started_threads == []
+    assert replacement.started_turns == []
+
+
+@pytest.mark.asyncio
+async def test_initialize_protocol_mismatch_is_incompatible(tmp_path: Path) -> None:
+    client = FakeAppServerClient()
+    client.start_error = AppServerProtocolError("unexpected initialize result")
+    runtime = _runtime(tmp_path, client)
+
+    with pytest.raises(AgentRuntimeIncompatible):
+        await runtime.start()
+
+
+@pytest.mark.asyncio
+async def test_initialize_method_mismatch_is_incompatible(tmp_path: Path) -> None:
+    client = FakeAppServerClient()
+    client.start_error = AppServerRpcError(-32601, "Method not found")
+    runtime = _runtime(tmp_path, client)
+
+    with pytest.raises(AgentRuntimeIncompatible):
+        await runtime.start()
+
+
+@pytest.mark.asyncio
+async def test_initialize_service_error_is_not_protocol_incompatibility(tmp_path: Path) -> None:
+    client = FakeAppServerClient()
+    client.start_error = AppServerRpcError(401, "Unauthorized")
+    runtime = _runtime(tmp_path, client)
+
+    with pytest.raises(AppServerRpcError, match="Unauthorized"):
+        await runtime.start()
+
+
+@pytest.mark.asyncio
+async def test_resume_protocol_error_is_incompatible_without_starting_turn(tmp_path: Path) -> None:
+    client = FakeAppServerClient()
+    client.resume_error = AppServerProtocolError("missing thread id")
+    store = ChannelSessionStore(tmp_path / "sessions.json")
+    store.set(1, "stored-thread")
+    runtime = CodexAppServerRuntime(cast(CodexAppServerClient, client), store)
+
+    with pytest.raises(AgentRuntimeIncompatible):
+        await runtime.run(channel_id=1, prompt="retry", cwd=tmp_path)
+
+    assert client.started_threads == []
+    assert client.started_turns == []

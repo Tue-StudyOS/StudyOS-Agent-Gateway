@@ -97,7 +97,7 @@ class AgentGateway:
             raise AgentConfigurationError("Agent command configuration is invalid") from exc
         self._codex_runtime = (
             CodexAppServerRuntime(
-                CodexAppServerClient(launch.command),
+                lambda: CodexAppServerClient(launch.command),
                 self._session_store,
                 model=launch.model,
                 model_provider=launch.model_provider,
@@ -272,6 +272,18 @@ class AgentGateway:
 
     async def interrupt(self, channel_id: int) -> bool:
         return await self._codex_runtime.interrupt(channel_id) if self._codex_runtime else False
+
+    async def channel_capabilities(self, channel_id: int) -> AgentChannelCapabilities:
+        if self._codex_runtime is None:
+            return AgentChannelCapabilities(False, False, False, False)
+        active_turn = await self._codex_runtime.has_active_turn(channel_id)
+        persisted_session = self._codex_runtime.has_persisted_session(channel_id)
+        return AgentChannelCapabilities(
+            steering=active_turn,
+            resumable=persisted_session and not active_turn,
+            persisted_session=persisted_session,
+            active_turn=active_turn,
+        )
 
     async def _prepare_discord_workspace(
         self,

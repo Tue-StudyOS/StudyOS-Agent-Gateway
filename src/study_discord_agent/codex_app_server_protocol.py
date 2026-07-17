@@ -32,6 +32,7 @@ class TurnRef:
 class AppServerNotification:
     method: str
     params: Mapping[str, JsonValue]
+    error: BaseException | None = None
 
 
 class NotificationHandler(Protocol):

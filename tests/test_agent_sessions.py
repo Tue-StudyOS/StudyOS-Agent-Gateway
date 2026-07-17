@@ -6,7 +6,11 @@ from typing import Any, cast
 
 import pytest
 
-from study_discord_agent.agent import AgentExecutionContext, AgentGateway
+from study_discord_agent.agent import (
+    AgentChannelCapabilities,
+    AgentExecutionContext,
+    AgentGateway,
+)
 from study_discord_agent.codex_app_server_runtime import SteerResult
 from study_discord_agent.codex_app_server_turn import AppServerTurnResult
 from study_discord_agent.codex_command import AgentUsage
@@ -51,6 +55,20 @@ class _FakePersistentRuntime:
         del local_images
         self.steers.append((channel_id, prompt))
         return SteerResult.STEERED
+
+
+class _CapabilityRuntime:
+    def __init__(self, *, active_turn: bool, persisted_session: bool) -> None:
+        self._active_turn = active_turn
+        self._persisted_session = persisted_session
+
+    async def has_active_turn(self, channel_id: int) -> bool:
+        assert channel_id == 123
+        return self._active_turn
+
+    def has_persisted_session(self, channel_id: int) -> bool:
+        assert channel_id == 123
+        return self._persisted_session
 
 
 @pytest.mark.asyncio
@@ -130,6 +148,24 @@ async def test_source_less_steering_reaches_persistent_runtime(
 
     assert result is SteerResult.STEERED
     assert fake_runtime.steers[0][0] == 123
+
+
+@pytest.mark.asyncio
+async def test_channel_capabilities_reflect_persistent_runtime_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent = AgentGateway(None, "codex exec --json -", None, 10)
+    runtime = _CapabilityRuntime(active_turn=False, persisted_session=True)
+    monkeypatch.setattr(agent, "_codex_runtime", cast(Any, runtime))
+
+    capabilities = await agent.channel_capabilities(123)
+
+    assert capabilities == AgentChannelCapabilities(
+        steering=False,
+        resumable=True,
+        persisted_session=True,
+        active_turn=False,
+    )
 
 
 @pytest.mark.asyncio
