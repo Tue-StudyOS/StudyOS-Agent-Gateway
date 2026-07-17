@@ -32,6 +32,19 @@ def _record(
     updated_at: datetime = NOW,
     **changes: Any,
 ) -> DiscordTaskRecord:
+    failure = None
+    if state is DiscordTaskState.DELIVERY_FAILED:
+        failure = DiscordTaskFailure(
+            category=DiscordTaskFailureCategory.DISCORD_DELIVERY,
+            summary="Discord could not deliver the result.",
+            retry_mode=DiscordTaskRetryMode.RETRY_DELIVERY,
+        )
+    elif state in {DiscordTaskState.FAILED, DiscordTaskState.TIMED_OUT}:
+        failure = DiscordTaskFailure(
+            category=DiscordTaskFailureCategory.INTERNAL,
+            summary="The task failed safely.",
+            retry_mode=DiscordTaskRetryMode.NONE,
+        )
     return DiscordTaskRecord(
         task_id=task_id,
         revision=0,
@@ -49,6 +62,7 @@ def _record(
         updated_at=updated_at.isoformat(),
         attempt=1,
         state=state,
+        failure=failure,
         **changes,
     )
 

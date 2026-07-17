@@ -3,9 +3,8 @@ import tempfile
 import threading
 from collections.abc import Callable, Mapping
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Final
 
 from study_discord_agent.discord_task_model import (
     ACTIVE_STATES,
@@ -19,9 +18,11 @@ from study_discord_agent.discord_task_model import (
     claim_interruption,
 )
 from study_discord_agent.discord_task_serialization import decode_document, encode_document
-
-RETENTION_DAYS: Final = 30
-MAX_INACTIVE_TASKS: Final = 500
+from study_discord_agent.discord_task_store_policy import (
+    apply_retention,
+    same_task_scope,
+    validate_continuation_graph,
+)
 
 
 class TaskStoreCorruptionError(RuntimeError):
@@ -47,6 +48,8 @@ class DiscordTaskStore:
         with self._lock:
             if record.task_id in self._tasks:
                 raise TaskAlreadyExists(record.task_id)
+            if record.continued_from_task_id is not None or record.continued_to_task_id is not None:
+                raise ValueError("continuation links may only be created by link_child")
             self._ensure_execution_available(record, self._tasks)
             tasks = dict(self._tasks)
             tasks[record.task_id] = record
@@ -66,6 +69,8 @@ class DiscordTaskStore:
         expected_revision: int,
         update: Callable[[DiscordTaskRecord], DiscordTaskRecord],
     ) -> DiscordTaskRecord:
+        if type(expected_revision) is not int or expected_revision < 0:
+            raise ValueError("expected_revision must be a non-negative integer")
         with self._lock:
             current = self._tasks[task_id]
             if current.revision != expected_revision:
@@ -97,12 +102,15 @@ class DiscordTaskStore:
                 child.state is not DiscordTaskState.STARTING
                 or child.continued_from_task_id != parent.task_id
                 or child.revision != 0
-                or not _same_task_scope(parent, child)
+                or not same_task_scope(parent, child)
             ):
                 raise ValueError("child must be a new linked starting task")
             self._ensure_execution_available(child, self._tasks)
             linked_parent = replace(
-                parent, continued_to_task_id=child.task_id, revision=parent.revision + 1
+                parent,
+                continued_to_task_id=child.task_id,
+                revision=parent.revision + 1,
+                updated_at=_timestamp(self._clock()),
             )
             tasks = dict(self._tasks)
             tasks[parent_id] = linked_parent
@@ -130,7 +138,9 @@ class DiscordTaskStore:
         if not self._path.exists():
             return {}
         try:
-            return decode_document(self._path.read_text(encoding="utf-8"))
+            tasks = decode_document(self._path.read_text(encoding="utf-8"))
+            validate_continuation_graph(tasks)
+            return tasks
         except OSError as error:
             raise TaskStoreCorruptionError("Discord task store is unreadable") from error
         except ValueError as error:
@@ -139,7 +149,7 @@ class DiscordTaskStore:
             ) from error
 
     def _commit(self, tasks: dict[str, DiscordTaskRecord]) -> None:
-        retained = _apply_retention(tasks, self._clock())
+        retained = apply_retention(tasks, self._clock())
         self._write(retained)
         self._tasks = retained
 
@@ -152,13 +162,17 @@ class DiscordTaskStore:
         temporary_path = Path(temporary_name)
         try:
             os.fchmod(descriptor, 0o600)
-            with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            output = os.fdopen(descriptor, "w", encoding="utf-8")
+            descriptor = None
+            with output:
                 output.write(document)
                 output.flush()
                 os.fsync(output.fileno())
             os.replace(temporary_path, self._path)
             _fsync_directory(self._path.parent)
         finally:
+            if descriptor is not None:
+                os.close(descriptor)
             if temporary_path.exists():
                 temporary_path.unlink()
 
@@ -250,32 +264,6 @@ def _delivery_retry_disabled(failure: DiscordTaskFailure | None) -> DiscordTaskF
             retry_mode=DiscordTaskRetryMode.NONE,
         )
     return replace(failure, retry_mode=DiscordTaskRetryMode.NONE)
-
-
-def _same_task_scope(parent: DiscordTaskRecord, child: DiscordTaskRecord) -> bool:
-    return (
-        parent.owner_id == child.owner_id
-        and parent.guild_id == child.guild_id
-        and parent.origin_channel_id == child.origin_channel_id
-        and parent.execution_channel_id == child.execution_channel_id
-    )
-
-
-def _apply_retention(
-    tasks: Mapping[str, DiscordTaskRecord], now: datetime
-) -> dict[str, DiscordTaskRecord]:
-    cutoff = _as_utc(now) - timedelta(days=RETENTION_DAYS)
-    active = {task_id: task for task_id, task in tasks.items() if task.state in ACTIVE_STATES}
-    inactive = [
-        task
-        for task in tasks.values()
-        if task.state not in ACTIVE_STATES
-        and _as_utc(datetime.fromisoformat(task.updated_at)) >= cutoff
-    ]
-    inactive.sort(key=lambda task: (task.updated_at, task.task_id), reverse=True)
-    retained = {task.task_id: task for task in inactive[:MAX_INACTIVE_TASKS]}
-    retained.update(active)
-    return retained
 
 
 def _timestamp(value: datetime) -> str:

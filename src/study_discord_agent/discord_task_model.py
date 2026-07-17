@@ -91,9 +91,9 @@ class DiscordTaskRecord:
         _validate_uuid(self.continued_to_task_id, "continued_to_task_id")
         if self.task_id in {self.continued_from_task_id, self.continued_to_task_id}:
             raise ValueError("a task cannot continue itself")
-        if self.revision < 0:
+        if type(self.revision) is not int or self.revision < 0:
             raise ValueError("revision must be non-negative")
-        if self.attempt < 1:
+        if type(self.attempt) is not int or self.attempt < 1:
             raise ValueError("attempt must be at least one")
         if not self.source_label or len(self.source_label) > 200:
             raise ValueError("source_label must be between 1 and 200 characters")
@@ -115,6 +115,12 @@ class DiscordTaskRecord:
                 raise ValueError(f"{name} must be a positive integer or None")
         _validate_timestamp(self.created_at, "created_at")
         _validate_timestamp(self.updated_at, "updated_at")
+        if self.state in _FAILURE_STATES and self.failure is None:
+            raise ValueError(f"{self.state} requires a failure")
+        if self.state in {DiscordTaskState.COMPLETED, DiscordTaskState.STOPPED} and self.failure:
+            raise ValueError(f"{self.state} cannot carry failure metadata")
+        if self.state is DiscordTaskState.DELIVERY_FAILED:
+            _validate_delivery_failure(self.failure)
 
 
 ACTIVE_STATES: Final[frozenset[DiscordTaskState]] = frozenset(
@@ -124,6 +130,13 @@ ACTIVE_STATES: Final[frozenset[DiscordTaskState]] = frozenset(
         DiscordTaskState.RUNNING,
         DiscordTaskState.STOPPING,
         DiscordTaskState.DELIVERING,
+    }
+)
+_FAILURE_STATES: Final[frozenset[DiscordTaskState]] = frozenset(
+    {
+        DiscordTaskState.FAILED,
+        DiscordTaskState.TIMED_OUT,
+        DiscordTaskState.DELIVERY_FAILED,
     }
 )
 _TRANSITIONS: Final[dict[DiscordTaskState, frozenset[DiscordTaskState]]] = {
@@ -166,11 +179,24 @@ def can_transition(current: DiscordTaskState, target: DiscordTaskState) -> bool:
 
 
 def transition(
-    record: DiscordTaskRecord, target: DiscordTaskState, updated_at: str
+    record: DiscordTaskRecord,
+    target: DiscordTaskState,
+    updated_at: str,
+    *,
+    failure: DiscordTaskFailure | None = None,
 ) -> DiscordTaskRecord:
     if not can_transition(record.state, target):
         raise InvalidDiscordTaskTransition(f"cannot transition {record.state} to {target}")
-    return replace(record, state=target, updated_at=updated_at)
+    if target in {DiscordTaskState.COMPLETED, DiscordTaskState.STOPPED}:
+        next_failure = None
+    else:
+        next_failure = failure or record.failure
+    return replace(
+        record,
+        state=target,
+        updated_at=updated_at,
+        failure=next_failure,
+    )
 
 
 def claim_interruption(
@@ -199,3 +225,15 @@ def _validate_timestamp(value: str, name: str) -> None:
         raise ValueError(f"{name} must be an ISO timestamp") from error
     if parsed.tzinfo is None:
         raise ValueError(f"{name} must have a timezone")
+
+
+def _validate_delivery_failure(failure: DiscordTaskFailure | None) -> None:
+    if failure is None:
+        raise ValueError("delivery failure requires a failure")
+    if failure.category is not DiscordTaskFailureCategory.DISCORD_DELIVERY:
+        raise ValueError("delivery failure must be categorized as Discord delivery")
+    if failure.retry_mode not in {
+        DiscordTaskRetryMode.RETRY_DELIVERY,
+        DiscordTaskRetryMode.NONE,
+    }:
+        raise ValueError("delivery failure cannot continue the agent session")

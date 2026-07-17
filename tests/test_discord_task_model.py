@@ -3,13 +3,27 @@ from dataclasses import replace
 import pytest
 
 from study_discord_agent.discord_task_model import (
+    DiscordTaskFailure,
+    DiscordTaskFailureCategory,
     DiscordTaskInterruptionCause,
     DiscordTaskRecord,
+    DiscordTaskRetryMode,
     DiscordTaskSourceKind,
     DiscordTaskState,
     InvalidDiscordTaskTransition,
     claim_interruption,
     transition,
+)
+
+FAILURE = DiscordTaskFailure(
+    category=DiscordTaskFailureCategory.INTERNAL,
+    summary="The task failed safely.",
+    retry_mode=DiscordTaskRetryMode.NONE,
+)
+DELIVERY_FAILURE = DiscordTaskFailure(
+    category=DiscordTaskFailureCategory.DISCORD_DELIVERY,
+    summary="Discord could not deliver the result.",
+    retry_mode=DiscordTaskRetryMode.RETRY_DELIVERY,
 )
 
 
@@ -31,7 +45,16 @@ def _record(state: DiscordTaskState = DiscordTaskState.STARTING) -> DiscordTaskR
         updated_at="2026-07-17T10:00:00+00:00",
         attempt=1,
         state=state,
+        failure=_failure_for(state),
     )
+
+
+def _failure_for(state: DiscordTaskState) -> DiscordTaskFailure | None:
+    if state is DiscordTaskState.DELIVERY_FAILED:
+        return DELIVERY_FAILURE
+    if state in {DiscordTaskState.FAILED, DiscordTaskState.TIMED_OUT}:
+        return FAILURE
+    return None
 
 
 @pytest.mark.parametrize(
@@ -62,7 +85,12 @@ def _record(state: DiscordTaskState = DiscordTaskState.STARTING) -> DiscordTaskR
 def test_transition_allows_documented_edges(
     from_state: DiscordTaskState, to_state: DiscordTaskState
 ) -> None:
-    result = transition(_record(from_state), to_state, "2026-07-17T10:01:00+00:00")
+    result = transition(
+        _record(from_state),
+        to_state,
+        "2026-07-17T10:01:00+00:00",
+        failure=_failure_for(to_state),
+    )
 
     assert result.state is to_state
     assert result.updated_at == "2026-07-17T10:01:00+00:00"
@@ -99,7 +127,12 @@ def test_transition_rejects_every_undocumented_edge(
         return
 
     with pytest.raises(InvalidDiscordTaskTransition):
-        transition(_record(from_state), to_state, "2026-07-17T10:01:00+00:00")
+        transition(
+            _record(from_state),
+            to_state,
+            "2026-07-17T10:01:00+00:00",
+            failure=_failure_for(to_state),
+        )
 
 
 def test_interruption_claim_preserves_the_first_cause_until_delivery() -> None:
@@ -116,6 +149,29 @@ def test_interruption_claim_preserves_the_first_cause_until_delivery() -> None:
         ).interruption_cause
         is None
     )
+
+
+def test_delivery_retry_and_stop_clear_stale_failure_metadata() -> None:
+    delivering = transition(
+        _record(DiscordTaskState.DELIVERY_FAILED),
+        DiscordTaskState.DELIVERING,
+        "2026-07-17T10:01:00+00:00",
+    )
+    completed = transition(delivering, DiscordTaskState.COMPLETED, "2026-07-17T10:02:00+00:00")
+    recovering = transition(
+        _record(DiscordTaskState.FAILED),
+        DiscordTaskState.RECOVERING,
+        "2026-07-17T10:01:00+00:00",
+    )
+    stopped = transition(
+        transition(recovering, DiscordTaskState.STOPPING, "2026-07-17T10:02:00+00:00"),
+        DiscordTaskState.STOPPED,
+        "2026-07-17T10:03:00+00:00",
+    )
+
+    assert completed.failure is None
+    assert recovering.failure is FAILURE
+    assert stopped.failure is None
 
 
 def test_record_rejects_unsafe_or_invalid_persisted_values() -> None:
