@@ -6,8 +6,15 @@ from study_discord_agent.agent_errors import (
 )
 from study_discord_agent.agent_execution_policy import AgentExecutionPolicy
 from study_discord_agent.codex_app_server import CodexAppServerClient
-from study_discord_agent.codex_app_server_protocol import ApprovalPolicy, SandboxMode, ThreadRef
+from study_discord_agent.codex_app_server_protocol import (
+    ApprovalPolicy,
+    JsonObject,
+    SandboxMode,
+    ThreadRef,
+)
 from study_discord_agent.session_store import ChannelSessionBinding, ChannelSessionStore
+
+_RESTRICTED_PERMISSION_PROFILE = "studyos-restricted"
 
 
 async def load_thread(
@@ -40,7 +47,9 @@ async def load_thread(
     effective_approval = (
         execution_policy.approval_policy if execution_policy else approval_policy
     )
-    effective_sandbox = execution_policy.sandbox_mode if execution_policy else sandbox
+    effective_sandbox = None if execution_policy else sandbox
+    permission_profile = _RESTRICTED_PERMISSION_PROFILE if execution_policy else None
+    thread_config = _restricted_thread_config(execution_policy)
     thread = await _open_thread(
         client,
         existing,
@@ -49,6 +58,8 @@ async def load_thread(
         model_provider=model_provider,
         approval_policy=effective_approval,
         sandbox=effective_sandbox,
+        permissions=permission_profile,
+        config=thread_config,
         restricted=execution_policy is not None,
         runtime_workspace_roots=roots,
     )
@@ -73,6 +84,8 @@ async def _open_thread(
     model_provider: str | None,
     approval_policy: ApprovalPolicy | None,
     sandbox: SandboxMode | None,
+    permissions: str | None,
+    config: JsonObject | None,
     restricted: bool,
     runtime_workspace_roots: tuple[str | Path, ...] | None,
 ) -> ThreadRef:
@@ -84,6 +97,8 @@ async def _open_thread(
             model_provider=model_provider,
             approval_policy=approval_policy,
             sandbox=sandbox,
+            permissions=permissions,
+            config=config,
             runtime_workspace_roots=runtime_workspace_roots,
         )
     return await client.start_thread(
@@ -92,10 +107,48 @@ async def _open_thread(
         model_provider=model_provider,
         approval_policy=approval_policy,
         sandbox=sandbox,
+        permissions=permissions,
+        config=config,
         dynamic_tools=() if restricted else None,
         environments=() if restricted else None,
         runtime_workspace_roots=runtime_workspace_roots,
     )
+
+
+def _restricted_thread_config(policy: AgentExecutionPolicy | None) -> JsonObject | None:
+    if policy is None:
+        return None
+    base_profile = ":workspace" if policy.sandbox_mode == "workspace-write" else ":read-only"
+    config: JsonObject = {
+        "permissions": {
+            _RESTRICTED_PERMISSION_PROFILE: {
+                "extends": base_profile,
+                "filesystem": {
+                    ":workspace_roots": {"**/.env*": "deny"},
+                    "/auth": "deny",
+                    "/proc": "deny",
+                    "/run/secrets": "deny",
+                },
+                "network": {"enabled": False},
+            },
+        },
+    }
+    if not policy.environment_access:
+        config.update(
+            {
+                "allow_login_shell": False,
+                "shell_environment_policy": {
+                    "inherit": "none",
+                    "set": {
+                        "LANG": "C.UTF-8",
+                        "PATH": (
+                            "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+                        ),
+                    },
+                },
+            }
+        )
+    return config
 
 
 def _restricted_binding(
@@ -130,8 +183,13 @@ def _validate_effective_policy(
 ) -> None:
     if (
         thread.approval_policy != policy.approval_policy
-        or thread.sandbox_policy != policy.sandbox_policy
+        or not _contains_policy(thread.sandbox_policy, policy.sandbox_policy)
+        or thread.permission_profile != _RESTRICTED_PERMISSION_PROFILE
     ):
         raise AgentRuntimeIncompatible(
             "Codex app-server did not apply the restricted execution policy"
         )
+
+
+def _contains_policy(actual: JsonObject | None, expected: JsonObject) -> bool:
+    return actual is not None and all(actual.get(key) == value for key, value in expected.items())

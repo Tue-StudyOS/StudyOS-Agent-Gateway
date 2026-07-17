@@ -22,6 +22,7 @@ class ThreadRef:
     thread_id: str
     approval_policy: ApprovalPolicy | None = None
     sandbox_policy: JsonObject | None = None
+    permission_profile: str | None = None
 
 
 @dataclass(frozen=True)

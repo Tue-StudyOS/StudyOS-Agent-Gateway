@@ -215,6 +215,42 @@ async def test_implementation_policy_creates_isolated_worktree_at_pinned_commit(
     assert _git(workspace.path, "rev-parse", "HEAD") == sha
 
 
+@pytest.mark.asyncio
+async def test_implementation_policy_rejects_reusing_worktree_for_new_commit(
+    tmp_path: Path,
+) -> None:
+    canonical_root = tmp_path / "Tue-StudyOS"
+    canonical = canonical_root / "example"
+    _create_git_repo(canonical)
+    first_sha = _git(canonical, "rev-parse", "HEAD")
+    manager = DiscordWorktreeManager(
+        str(tmp_path / "discord-worktrees"), str(canonical_root)
+    )
+    policy = execution_policy(AgentPolicyClass.IMPLEMENTATION)
+    await manager.prepare(
+        "implement the first revision",
+        123,
+        repository_full_name="Tue-StudyOS/example",
+        repository_commit_sha=first_sha,
+        execution_policy=policy,
+    )
+    (canonical / "README.md").write_text("# Updated\n", encoding="utf-8")
+    _run(canonical, "git", "add", "README.md")
+    _run(canonical, "git", "commit", "-m", "update")
+    second_sha = _git(canonical, "rev-parse", "HEAD")
+
+    with pytest.raises(RuntimeError, match="pinned to another commit"):
+        await manager.prepare(
+            "implement the updated revision",
+            123,
+            repository_full_name="Tue-StudyOS/example",
+            repository_commit_sha=second_sha,
+            execution_policy=policy,
+        )
+    worktree = tmp_path / "discord-worktrees" / "123" / "example"
+    assert _git(worktree, "rev-parse", "HEAD") == first_sha
+
+
 def _create_git_repo(path: Path) -> None:
     path.mkdir(parents=True)
     _run(path, "git", "init")

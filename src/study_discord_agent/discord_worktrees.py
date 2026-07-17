@@ -173,6 +173,12 @@ class DiscordWorktreeManager:
     ) -> None:
         if worktree_path.exists():
             if await _is_git_worktree(worktree_path):
+                if commit_sha != "HEAD":
+                    existing_sha = await _current_commit(worktree_path)
+                    if existing_sha != commit_sha:
+                        raise RuntimeError(
+                            "Existing restricted worktree is pinned to another commit",
+                        )
                 return
             if any(worktree_path.iterdir()):
                 raise RuntimeError(
@@ -244,6 +250,24 @@ async def _resolve_commit(path: Path, commit_sha: str) -> str:
     resolved = stdout.decode().strip()
     if process.returncode != 0 or re.fullmatch(r"[0-9a-f]{40,64}", resolved) is None:
         raise RuntimeError("Restricted repository commit is unavailable locally")
+    return resolved
+
+
+async def _current_commit(path: Path) -> str:
+    process = await asyncio.create_subprocess_exec(
+        "git",
+        "-C",
+        str(path),
+        "rev-parse",
+        "--verify",
+        "HEAD^{commit}",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    stdout, _ = await process.communicate()
+    resolved = stdout.decode().strip()
+    if process.returncode != 0 or re.fullmatch(r"[0-9a-f]{40,64}", resolved) is None:
+        raise RuntimeError("Existing Discord worktree commit cannot be resolved")
     return resolved
 
 

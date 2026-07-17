@@ -55,7 +55,10 @@ for line in sys.stdin:
     elif method in ("thread/start", "thread/resume"):
         thread_id = params.get("threadId", "thread-1")
         send({"method": "test/observed", "params": {"method": method, "params": params}})
-        send({"id": request_id, "result": {"thread": {"id": thread_id}}})
+        result = {"thread": {"id": thread_id}}
+        if params.get("permissions"):
+            result["activePermissionProfile"] = {"id": params["permissions"]}
+        send({"id": request_id, "result": result})
     elif method == "turn/start":
         send({"method": "turn/started", "params": {
             "threadId": params["threadId"],
@@ -142,6 +145,30 @@ async def test_thread_turn_lifecycle_and_notifications(tmp_path: Path) -> None:
     steer_params = notifications[3].params["params"]
     assert isinstance(steer_params, dict)
     assert steer_params["expectedTurnId"] == "turn-1"
+
+
+@pytest.mark.asyncio
+async def test_permission_profile_wire_and_legacy_sandbox_exclusion() -> None:
+    client = CodexAppServerClient(_command())
+
+    with pytest.raises(
+        ValueError,
+        match="Permission profiles cannot be combined with the legacy sandbox",
+    ):
+        await client.start_thread(
+            permissions="github-review",
+            sandbox="read-only",
+        )
+
+    async with client:
+        thread = await client.start_thread(permissions="github-review")
+        resumed = await client.resume_thread(
+            thread.thread_id,
+            permissions="github-review",
+        )
+
+    assert thread.permission_profile == "github-review"
+    assert resumed.permission_profile == "github-review"
 
 
 @pytest.mark.asyncio
