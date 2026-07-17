@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass, replace
 from datetime import datetime
 from enum import StrEnum
@@ -24,6 +25,14 @@ class DiscordTaskSourceKind(StrEnum):
     SLASH = "slash"
     CONTEXT_ACTION = "context_action"
     CONTINUATION = "continuation"
+
+
+class DiscordTaskIntent(StrEnum):
+    GENERAL = "general"
+    REVIEW = "review"
+    SECURITY_REVIEW = "security_review"
+    VULNERABILITY_SCAN = "vulnerability_scan"
+    IMPLEMENTATION = "implementation"
 
 
 class DiscordTaskInterruptionCause(StrEnum):
@@ -84,6 +93,9 @@ class DiscordTaskRecord:
     interruption_cause: DiscordTaskInterruptionCause | None = None
     continued_from_task_id: str | None = None
     continued_to_task_id: str | None = None
+    intent: DiscordTaskIntent = DiscordTaskIntent.GENERAL
+    source_reference_id: str | None = None
+    repository_commit_sha: str | None = None
 
     def __post_init__(self) -> None:
         _validate_uuid(self.task_id, "task_id")
@@ -91,6 +103,10 @@ class DiscordTaskRecord:
         _validate_uuid(self.continued_to_task_id, "continued_to_task_id")
         if self.task_id in {self.continued_from_task_id, self.continued_to_task_id}:
             raise ValueError("a task cannot continue itself")
+        if type(self.intent) is not DiscordTaskIntent:
+            raise ValueError("intent must be a Discord task intent")
+        validate_source_reference_id(self.source_reference_id)
+        validate_repository_commit_sha(self.repository_commit_sha)
         if type(self.revision) is not int or self.revision < 0:
             raise ValueError("revision must be non-negative")
         if type(self.attempt) is not int or self.attempt < 1:
@@ -249,6 +265,20 @@ def _validate_timestamp(value: str, name: str) -> None:
         raise ValueError(f"{name} must be an ISO timestamp") from error
     if parsed.tzinfo is None:
         raise ValueError(f"{name} must have a timezone")
+
+
+def validate_source_reference_id(value: object) -> None:
+    if value is not None and (
+        not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{32}", value) is None
+    ):
+        raise ValueError("source_reference_id must be 32 lowercase hexadecimal characters")
+
+
+def validate_repository_commit_sha(value: object) -> None:
+    if value is not None and (
+        not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{40}", value) is None
+    ):
+        raise ValueError("repository_commit_sha must be 40 lowercase hexadecimal characters")
 
 
 def _validate_delivery_failure(failure: DiscordTaskFailure | None) -> None:

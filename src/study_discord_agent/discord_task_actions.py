@@ -10,6 +10,7 @@ from study_discord_agent.discord_task_auth import (
     DiscordTaskAction,
     authorize,
 )
+from study_discord_agent.discord_task_execution import AgentRunSpec
 from study_discord_agent.discord_task_failures import classify_delivery_failure
 from study_discord_agent.discord_task_model import (
     ACTIVE_STATES,
@@ -25,7 +26,7 @@ from study_discord_agent.discord_task_request import (
     DiscordTaskRequest,
     DiscordTaskSteerRequest,
 )
-from study_discord_agent.discord_task_runtime import AgentRunSpec, DiscordTaskRuntime
+from study_discord_agent.discord_task_runtime import DiscordTaskRuntime
 from study_discord_agent.discord_task_service_errors import DiscordTaskActionUnavailable
 from study_discord_agent.discord_task_service_state import (
     BoundedClaims,
@@ -84,13 +85,9 @@ class DiscordTaskActions:
                 raise DiscordTaskActionUnavailable("Only a running task can be steered.")
             self._interactions.remember(interaction_id, task_id)
             try:
-                capabilities = await self._agent.channel_capabilities(
-                    record.execution_channel_id
-                )
+                capabilities = await self._agent.channel_capabilities(record.execution_channel_id)
             except Exception as error:
-                raise DiscordTaskActionUnavailable(
-                    "This task is not steerable now."
-                ) from error
+                raise DiscordTaskActionUnavailable("This task is not steerable now.") from error
             record = self._store.get(task_id)
             authorize(record, DiscordTaskAction.STEER, access)
             if record.state is not DiscordTaskState.RUNNING or not capabilities.steering:
@@ -179,18 +176,14 @@ class DiscordTaskActions:
             recovering = persist_update(
                 self._store,
                 record,
-                lambda current: transition(
-                    current, DiscordTaskState.RECOVERING, self._now()
-                ),
+                lambda current: transition(current, DiscordTaskState.RECOVERING, self._now()),
             )
         except (TaskRevisionConflict, ValueError) as error:
             raise DiscordTaskActionUnavailable(
                 "This task cannot recover while another task is active."
             ) from error
         self._interactions.remember(interaction_id, task_id)
-        self._runtime.spawn_agent(
-            task_id, AgentRunSpec.for_recovery(GENERIC_RESUME_PROMPT)
-        )
+        self._runtime.spawn_agent(task_id, AgentRunSpec.for_recovery(GENERIC_RESUME_PROMPT))
         await self._runtime.render(recovering)
         return recovering
 
@@ -217,18 +210,17 @@ class DiscordTaskActions:
                 return self._store.get(duplicate)
             self._queries.validate_continuation(parent, request)
             self._runtime.ensure_open()
+            task_id = request.task_id or self._task_id_factory()
             child = new_record(
                 request,
-                self._task_id_factory(),
+                task_id,
                 self._clock(),
-                continued_from_task_id=parent.task_id,
+                continued_from=parent,
             )
             linked_parent, linked_child = persist_link(self._store, parent, child)
             self._interactions.remember(interaction_id, linked_child.task_id)
             self._triggers.remember(request.trigger_event_id, linked_child.task_id)
-            self._runtime.spawn_agent(
-                linked_child.task_id, AgentRunSpec.from_request(request)
-            )
+            self._runtime.spawn_agent(linked_child.task_id, AgentRunSpec.from_request(request))
             accepted = True
             await self._runtime.render(linked_parent)
             return linked_child
@@ -236,9 +228,7 @@ class DiscordTaskActions:
             if not accepted:
                 request.attachments.cleanup()
 
-    async def forget(
-        self, task_id: str, access: DiscordTaskAccess, interaction_id: int
-    ) -> None:
+    async def forget(self, task_id: str, access: DiscordTaskAccess, interaction_id: int) -> None:
         if self._interactions.existing(interaction_id) is not None:
             return
         record = self._queries.status(task_id, access)
@@ -248,9 +238,7 @@ class DiscordTaskActions:
         try:
             neighbors = self._store.forget(task_id, record.revision)
         except ValueError as error:
-            raise DiscordTaskActionUnavailable(
-                "An active task cannot be forgotten."
-            ) from error
+            raise DiscordTaskActionUnavailable("An active task cannot be forgotten.") from error
         self._interactions.remember(interaction_id, task_id)
         self._runtime.discard(task_id)
         for neighbor in neighbors:
@@ -277,9 +265,7 @@ class DiscordTaskActions:
             delivering = persist_update(
                 self._store,
                 record,
-                lambda current: transition(
-                    current, DiscordTaskState.DELIVERING, self._now()
-                ),
+                lambda current: transition(current, DiscordTaskState.DELIVERING, self._now()),
             )
         except BaseException:
             self._runtime.restore_delivery(record.task_id, reply)

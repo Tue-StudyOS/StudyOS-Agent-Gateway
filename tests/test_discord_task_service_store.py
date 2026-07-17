@@ -6,8 +6,11 @@ from typing import cast
 import pytest
 
 from study_discord_agent.agent import AgentChannelCapabilities, AgentExecutionContext
+from study_discord_agent.agent_execution_policy import AgentPolicyClass, execution_policy
 from study_discord_agent.discord_reply_content import PreparedDiscordReply
 from study_discord_agent.discord_task_model import (
+    DiscordTaskIntent,
+    DiscordTaskRecord,
     DiscordTaskSourceKind,
     DiscordTaskState,
     transition,
@@ -28,14 +31,31 @@ from tests.test_discord_task_service_fixtures import (
 async def test_continue_links_only_latest_created_completed_task_and_rerenders_parent(
     tmp_path: Path,
 ) -> None:
-    harness = make_harness(tmp_path)
+    resolved: list[DiscordTaskRecord] = []
+    policy = execution_policy(AgentPolicyClass.SECURITY_REVIEW)
+
+    def resolve(record: DiscordTaskRecord) -> AgentExecutionContext:
+        resolved.append(record)
+        return AgentExecutionContext(
+            channel_id=record.execution_channel_id,
+            trigger_event_id=record.trigger_event_id,
+            repository_full_name="Tue-StudyOS/example",
+            repository_commit_sha=record.repository_commit_sha,
+            execution_policy=policy,
+        )
+
+    harness = make_harness(tmp_path, execution_context_resolver=resolve)
     older = stored_record(
         "0000000000000000000000000000000a",
         DiscordTaskState.COMPLETED,
         created_at=NOW - timedelta(minutes=1),
     )
     latest = stored_record(
-        "0000000000000000000000000000000b", DiscordTaskState.COMPLETED
+        "0000000000000000000000000000000b",
+        DiscordTaskState.COMPLETED,
+        intent=DiscordTaskIntent.SECURITY_REVIEW,
+        source_reference_id="a" * 32,
+        repository_commit_sha="b" * 40,
     )
     harness.store.create(older)
     harness.store.create(latest)
@@ -43,6 +63,10 @@ async def test_continue_links_only_latest_created_completed_task_and_rerenders_p
         trigger_event_id=300,
         prompt="continue with this",
         source_kind=DiscordTaskSourceKind.CONTINUATION,
+        intent=DiscordTaskIntent.IMPLEMENTATION,
+        source_reference_id="c" * 32,
+        repository_commit_sha="d" * 40,
+        task_id="123e4567-e89b-12d3-a456-426614174000",
     )
 
     with pytest.raises(DiscordTaskActionUnavailable, match="latest"):
@@ -58,12 +82,17 @@ async def test_continue_links_only_latest_created_completed_task_and_rerenders_p
     parent = harness.store.get(latest.task_id)
     assert parent.continued_to_task_id == child.task_id
     assert child.continued_from_task_id == parent.task_id
+    assert child.task_id == "123e4567-e89b-12d3-a456-426614174000"
+    assert child.intent is parent.intent is DiscordTaskIntent.SECURITY_REVIEW
+    assert child.source_reference_id == parent.source_reference_id == "a" * 32
+    assert child.repository_commit_sha == parent.repository_commit_sha == "b" * 40
     assert parent in harness.presentation.render_calls
     await wait_for_state(harness.store, child.task_id, DiscordTaskState.RUNNING)
     harness.agent.ask_release[10].set()
     await wait_for_state(harness.store, child.task_id, DiscordTaskState.COMPLETED)
     execution = cast(AgentExecutionContext, harness.agent.ask_calls[-1]["execution"])
     assert execution.require_existing_session
+    assert resolved[-1].task_id == child.task_id
     await harness.service.close()
 
 
@@ -72,19 +101,13 @@ async def test_forget_atomically_unlinks_both_neighbors_and_discards_cache(
     tmp_path: Path,
 ) -> None:
     harness = make_harness(tmp_path)
-    parent = stored_record(
-        "00000000000000000000000000000001", DiscordTaskState.COMPLETED
-    )
+    parent = stored_record("00000000000000000000000000000001", DiscordTaskState.COMPLETED)
     child = replace(
-        stored_record(
-            "00000000000000000000000000000002", DiscordTaskState.STARTING
-        ),
+        stored_record("00000000000000000000000000000002", DiscordTaskState.STARTING),
         continued_from_task_id=parent.task_id,
     )
     grandchild = replace(
-        stored_record(
-            "00000000000000000000000000000003", DiscordTaskState.STARTING
-        ),
+        stored_record("00000000000000000000000000000003", DiscordTaskState.STARTING),
         continued_from_task_id=child.task_id,
     )
     harness.store.create(parent)
@@ -122,9 +145,7 @@ async def test_forget_rejects_active_task_and_cleans_rejected_continuation_input
     tmp_path: Path,
 ) -> None:
     harness = make_harness(tmp_path)
-    task = stored_record(
-        "00000000000000000000000000000001", DiscordTaskState.RUNNING
-    )
+    task = stored_record("00000000000000000000000000000001", DiscordTaskState.RUNNING)
     harness.store.create(task)
     with pytest.raises(DiscordTaskActionUnavailable, match="active"):
         await harness.service.forget(task.task_id, access(), interaction_id=903)
@@ -173,9 +194,7 @@ def test_status_active_and_list_are_authorized_bounded_and_newest_first(
     )
 
     assert len(terminal) == 10
-    assert [record.execution_channel_id for record in terminal] == list(
-        range(21, 11, -1)
-    )
+    assert [record.execution_channel_id for record in terminal] == list(range(21, 11, -1))
     channel = harness.service.list_tasks(
         broad_access, scope="channel", state="active", current_channel_id=50
     )
@@ -203,15 +222,11 @@ async def test_bounded_trigger_claim_prevents_reexecution_after_forget(
 def test_list_orders_timezone_offsets_by_actual_creation_time(tmp_path: Path) -> None:
     harness = make_harness(tmp_path)
     earlier = replace(
-        stored_record(
-            "00000000000000000000000000000001", DiscordTaskState.COMPLETED
-        ),
+        stored_record("00000000000000000000000000000001", DiscordTaskState.COMPLETED),
         created_at="2026-07-17T13:30:00+02:00",
     )
     later = replace(
-        stored_record(
-            "00000000000000000000000000000002", DiscordTaskState.COMPLETED
-        ),
+        stored_record("00000000000000000000000000000002", DiscordTaskState.COMPLETED),
         created_at="2026-07-17T12:00:00+00:00",
     )
     harness.store.create(earlier)

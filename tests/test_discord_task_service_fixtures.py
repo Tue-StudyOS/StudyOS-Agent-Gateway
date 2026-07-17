@@ -1,11 +1,11 @@
 import asyncio
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
-from study_discord_agent.agent import AgentGateway
+from study_discord_agent.agent import AgentExecutionContext, AgentGateway
 from study_discord_agent.discord_delivery_cache import DiscordDeliveryCache
 from study_discord_agent.discord_origin import DiscordOriginContext
 from study_discord_agent.discord_task_auth import DiscordTaskAccess
@@ -14,6 +14,7 @@ from study_discord_agent.discord_task_inputs import StagedDiscordAttachments
 from study_discord_agent.discord_task_model import (
     DiscordTaskFailure,
     DiscordTaskFailureCategory,
+    DiscordTaskIntent,
     DiscordTaskRecord,
     DiscordTaskRetryMode,
     DiscordTaskSourceKind,
@@ -25,6 +26,9 @@ from study_discord_agent.discord_task_store import DiscordTaskStore
 from tests.discord_task_service_fakes import FakeAgent, FakePresentation
 
 NOW = datetime(2026, 7, 17, 12, tzinfo=UTC)
+ExecutionContextResolver = Callable[
+    [DiscordTaskRecord], AgentExecutionContext | Awaitable[AgentExecutionContext]
+]
 
 
 class TrackingAttachments:
@@ -64,6 +68,7 @@ def make_harness(
     store: DiscordTaskStore | None = None,
     cache: DiscordDeliveryCache | None = None,
     clock: Callable[[], datetime] = lambda: NOW,
+    execution_context_resolver: ExecutionContextResolver | None = None,
 ) -> ServiceHarness:
     actual_agent = agent or FakeAgent()
     actual_presentation = presentation or FakePresentation()
@@ -78,6 +83,7 @@ def make_harness(
         max_artifact_bytes=8_000_000,
         clock=clock,
         task_id_factory=TaskIdFactory(),
+        execution_context_resolver=execution_context_resolver,
     )
     return ServiceHarness(service, actual_store, actual_agent, actual_presentation, actual_cache)
 
@@ -90,6 +96,10 @@ def request(
     prompt: str = "do the task",
     attachments: TrackingAttachments | None = None,
     source_kind: DiscordTaskSourceKind = DiscordTaskSourceKind.MENTION,
+    intent: DiscordTaskIntent = DiscordTaskIntent.GENERAL,
+    source_reference_id: str | None = None,
+    repository_commit_sha: str | None = None,
+    task_id: str | None = None,
 ) -> DiscordTaskRequest:
     staged = attachments or TrackingAttachments()
     return DiscordTaskRequest(
@@ -104,6 +114,10 @@ def request(
         source_label="Discord request",
         attachments=cast(StagedDiscordAttachments, staged),
         origin_context=DiscordOriginContext(channel_id=channel_id),
+        intent=intent,
+        source_reference_id=source_reference_id,
+        repository_commit_sha=repository_commit_sha,
+        task_id=task_id,
     )
 
 
@@ -130,6 +144,9 @@ def stored_record(
     owner_id: int = 1,
     created_at: datetime = NOW,
     failure: DiscordTaskFailure | None = None,
+    intent: DiscordTaskIntent = DiscordTaskIntent.GENERAL,
+    source_reference_id: str | None = None,
+    repository_commit_sha: str | None = None,
 ) -> DiscordTaskRecord:
     if failure is None and state in {DiscordTaskState.FAILED, DiscordTaskState.TIMED_OUT}:
         failure = DiscordTaskFailure(
@@ -155,6 +172,9 @@ def stored_record(
         attempt=1,
         state=state,
         failure=failure,
+        intent=intent,
+        source_reference_id=source_reference_id,
+        repository_commit_sha=repository_commit_sha,
     )
 
 

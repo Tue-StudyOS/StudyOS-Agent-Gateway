@@ -2,9 +2,11 @@ from dataclasses import replace
 
 import pytest
 
+import study_discord_agent.discord_task_model as task_model
 from study_discord_agent.discord_task_model import (
     DiscordTaskFailure,
     DiscordTaskFailureCategory,
+    DiscordTaskIntent,
     DiscordTaskInterruptionCause,
     DiscordTaskRecord,
     DiscordTaskRetryMode,
@@ -25,6 +27,16 @@ DELIVERY_FAILURE = DiscordTaskFailure(
     summary="Discord could not deliver the result.",
     retry_mode=DiscordTaskRetryMode.RETRY_DELIVERY,
 )
+
+
+def test_task_intents_cover_general_and_restricted_github_actions() -> None:
+    assert {intent.value for intent in task_model.DiscordTaskIntent} == {
+        "general",
+        "review",
+        "security_review",
+        "vulnerability_scan",
+        "implementation",
+    }
 
 
 def _record(state: DiscordTaskState = DiscordTaskState.STARTING) -> DiscordTaskRecord:
@@ -157,3 +169,24 @@ def test_record_rejects_unsafe_or_invalid_persisted_values() -> None:
         replace(_record(), updated_at="2026-07-17T10:00:00")
     with pytest.raises(ValueError, match="continue itself"):
         replace(_record(), continued_from_task_id=_record().task_id)
+
+
+def test_record_validates_persisted_task_bridge_metadata() -> None:
+    record = replace(
+        _record(),
+        intent=DiscordTaskIntent.SECURITY_REVIEW,
+        source_reference_id="a" * 32,
+        repository_commit_sha="b" * 40,
+    )
+
+    assert record.intent is DiscordTaskIntent.SECURITY_REVIEW
+    assert record.source_reference_id == "a" * 32
+    assert record.repository_commit_sha == "b" * 40
+    invalid = (
+        ({"intent": "review"}, "intent"),
+        ({"source_reference_id": "A" * 32}, "source_reference_id"),
+        ({"repository_commit_sha": "b" * 39}, "repository_commit_sha"),
+    )
+    for changes, message in invalid:
+        with pytest.raises(ValueError, match=message):
+            replace(_record(), **changes)

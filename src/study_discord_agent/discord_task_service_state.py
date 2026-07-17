@@ -42,11 +42,11 @@ def new_record(
     task_id: str,
     now: datetime,
     *,
-    continued_from_task_id: str | None = None,
+    continued_from: DiscordTaskRecord | None = None,
 ) -> DiscordTaskRecord:
     timestamp = as_timestamp(now)
     return DiscordTaskRecord(
-        task_id=task_id,
+        task_id=request.task_id or task_id,
         revision=0,
         owner_id=request.owner_id,
         guild_id=request.guild_id,
@@ -62,7 +62,16 @@ def new_record(
         updated_at=timestamp,
         attempt=1,
         state=DiscordTaskState.STARTING,
-        continued_from_task_id=continued_from_task_id,
+        continued_from_task_id=continued_from.task_id if continued_from else None,
+        intent=continued_from.intent if continued_from else request.intent,
+        source_reference_id=(
+            continued_from.source_reference_id if continued_from else request.source_reference_id
+        ),
+        repository_commit_sha=(
+            continued_from.repository_commit_sha
+            if continued_from
+            else request.repository_commit_sha
+        ),
     )
 
 

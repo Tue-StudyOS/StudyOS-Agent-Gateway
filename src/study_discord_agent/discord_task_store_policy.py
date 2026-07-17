@@ -40,6 +40,9 @@ def same_task_scope(parent: DiscordTaskRecord, child: DiscordTaskRecord) -> bool
         and parent.guild_id == child.guild_id
         and parent.origin_channel_id == child.origin_channel_id
         and parent.execution_channel_id == child.execution_channel_id
+        and parent.intent is child.intent
+        and parent.source_reference_id == child.source_reference_id
+        and parent.repository_commit_sha == child.repository_commit_sha
     )
 
 

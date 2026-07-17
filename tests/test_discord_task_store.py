@@ -10,6 +10,7 @@ import pytest
 from study_discord_agent.discord_task_model import (
     DiscordTaskFailure,
     DiscordTaskFailureCategory,
+    DiscordTaskIntent,
     DiscordTaskRecord,
     DiscordTaskRetryMode,
     DiscordTaskSourceKind,
@@ -76,12 +77,17 @@ def test_create_round_trips_only_explicit_schema_with_owner_only_permissions(
     tmp_path: Path,
 ) -> None:
     store = _store(tmp_path)
-    store.create(_record())
+    record = _record(
+        intent=DiscordTaskIntent.SECURITY_REVIEW,
+        source_reference_id="a" * 32,
+        repository_commit_sha="b" * 40,
+    )
+    store.create(record)
 
     payload = json.loads((tmp_path / "discord-tasks.json").read_text())
     assert set(payload) == {"version", "tasks"}
-    assert payload["version"] == 1
-    persisted = payload["tasks"][_record().task_id]
+    assert payload["version"] == 2
+    persisted = payload["tasks"][record.task_id]
     assert set(persisted) == {
         "task_id",
         "revision",
@@ -103,9 +109,31 @@ def test_create_round_trips_only_explicit_schema_with_owner_only_permissions(
         "interruption_cause",
         "continued_from_task_id",
         "continued_to_task_id",
+        "intent",
+        "source_reference_id",
+        "repository_commit_sha",
     }
+    assert persisted["intent"] == "security_review"
+    assert persisted["source_reference_id"] == "a" * 32
+    assert persisted["repository_commit_sha"] == "b" * 40
     assert os.stat(tmp_path / "discord-tasks.json").st_mode & 0o777 == 0o600
-    assert DiscordTaskStore(tmp_path / "discord-tasks.json").get(_record().task_id) == _record()
+    assert DiscordTaskStore(tmp_path / "discord-tasks.json").get(record.task_id) == record
+
+
+def test_loads_v1_records_with_safe_general_task_bridge_defaults(tmp_path: Path) -> None:
+    path = tmp_path / "discord-tasks.json"
+    payload = json.loads(encode_document({_record().task_id: _record()}))
+    payload["version"] = 1
+    persisted = payload["tasks"][_record().task_id]
+    for field in ("intent", "source_reference_id", "repository_commit_sha"):
+        persisted.pop(field, None)
+    path.write_text(json.dumps(payload))
+
+    loaded = DiscordTaskStore(path).get(_record().task_id)
+
+    assert loaded.intent is DiscordTaskIntent.GENERAL
+    assert loaded.source_reference_id is None
+    assert loaded.repository_commit_sha is None
 
 
 def test_hyphenated_task_id_is_retrievable_through_component_hex_id(
@@ -119,9 +147,7 @@ def test_hyphenated_task_id_is_retrievable_through_component_hex_id(
     updated = store.compare_and_set(
         "123e4567e89b12d3a456426614174000",
         record.revision,
-        lambda current: transition(
-            current, DiscordTaskState.RUNNING, NOW.isoformat()
-        ),
+        lambda current: transition(current, DiscordTaskState.RUNNING, NOW.isoformat()),
     )
 
     assert updated.state is DiscordTaskState.RUNNING
@@ -141,7 +167,7 @@ def test_load_rejects_uuid_alias_duplicates(tmp_path: Path) -> None:
     "payload",
     [
         {},
-        {"version": 2, "tasks": {}},
+        {"version": 3, "tasks": {}},
         {"version": True, "tasks": {}},
         {"version": 1, "tasks": [], "extra": True},
         {"version": 1, "tasks": {"not-a-uuid": {}}},
@@ -230,6 +256,13 @@ def test_link_child_requires_latest_completed_parent_and_links_both_records(tmp_
         continued_from_task_id=parent.task_id,
     )
     store.create(parent)
+
+    with pytest.raises(ValueError, match="linked starting"):
+        store.link_child(
+            parent.task_id,
+            0,
+            replace(child, intent=DiscordTaskIntent.REVIEW),
+        )
 
     linked_parent, linked_child = store.link_child(parent.task_id, 0, child)
 
@@ -326,6 +359,31 @@ def test_compare_and_set_cannot_link_a_child_or_change_its_scope(tmp_path: Path)
             0,
             lambda record: replace(record, continued_to_task_id=child.task_id),
         )
+
+
+def test_compare_and_set_cannot_change_persisted_task_bridge_context(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    record = _record(
+        intent=DiscordTaskIntent.REVIEW,
+        source_reference_id="a" * 32,
+        repository_commit_sha="b" * 40,
+    )
+    store.create(record)
+
+    changes = (
+        {"intent": DiscordTaskIntent.IMPLEMENTATION},
+        {"source_reference_id": "c" * 32},
+        {"repository_commit_sha": "d" * 40},
+    )
+    for change in changes:
+        with pytest.raises(ValueError, match="identity"):
+            store.compare_and_set(
+                record.task_id,
+                record.revision,
+                lambda current, change=change: replace(current, **change),
+            )
 
 
 def _raise_replace(source: str | bytes | Path, target: str | bytes | Path) -> None:

@@ -156,9 +156,7 @@ class DiscordTaskStore:
                 self._commit(tasks)
         return tuple(changed)
 
-    def forget(
-        self, task_id: str, expected_revision: int
-    ) -> tuple[DiscordTaskRecord, ...]:
+    def forget(self, task_id: str, expected_revision: int) -> tuple[DiscordTaskRecord, ...]:
         if type(expected_revision) is not int or expected_revision < 0:
             raise ValueError("expected_revision must be a non-negative integer")
         with self._lock:
@@ -230,6 +228,9 @@ class DiscordTaskStore:
             "source_message_id",
             "source_kind",
             "source_label",
+            "intent",
+            "source_reference_id",
+            "repository_commit_sha",
             "created_at",
             "continued_from_task_id",
             "continued_to_task_id",
@@ -250,8 +251,7 @@ class DiscordTaskStore:
         if (
             current.interruption_cause is None
             and candidate.interruption_cause is not None
-            and current.state
-            in {DiscordTaskState.DELIVERING, DiscordTaskState.COMPLETED}
+            and current.state in {DiscordTaskState.DELIVERING, DiscordTaskState.COMPLETED}
         ):
             raise ValueError("delivery and completion cannot claim interruption")
 
@@ -269,9 +269,7 @@ def _reconcile(record: DiscordTaskRecord, timestamp: str) -> DiscordTaskRecord:
             updated_at=timestamp,
         )
     if record.state is DiscordTaskState.DELIVERING and record.result_message_id is not None:
-        return replace(
-            record, state=DiscordTaskState.COMPLETED, updated_at=timestamp, failure=None
-        )
+        return replace(record, state=DiscordTaskState.COMPLETED, updated_at=timestamp, failure=None)
     if record.state is DiscordTaskState.DELIVERING:
         return replace(
             record,

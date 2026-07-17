@@ -6,10 +6,13 @@ from typing import cast
 import pytest
 
 from study_discord_agent.agent import AgentChannelCapabilities, AgentExecutionContext
+from study_discord_agent.agent_execution_policy import AgentPolicyClass, execution_policy
 from study_discord_agent.codex_app_server_runtime import SteerResult
 from study_discord_agent.discord_task_inputs import StagedDiscordAttachments
 from study_discord_agent.discord_task_model import (
+    DiscordTaskIntent,
     DiscordTaskInterruptionCause,
+    DiscordTaskRecord,
     DiscordTaskState,
 )
 from study_discord_agent.discord_task_request import DiscordTaskSteerRequest
@@ -30,10 +33,100 @@ from tests.test_discord_task_service_fixtures import (
 def test_request_rejects_blank_prompt_and_invalid_source_label() -> None:
     valid = request()
 
+    assert valid.intent is DiscordTaskIntent.GENERAL
+    assert valid.source_reference_id is None
+    assert valid.repository_commit_sha is None
+    assert valid.task_id is None
+
     with pytest.raises(ValueError, match="prompt"):
         replace(valid, prompt="  ")
     with pytest.raises(ValueError, match="source_label"):
         replace(valid, source_label="")
+
+
+def test_request_validates_task_bridge_metadata_and_preallocated_id() -> None:
+    request_id = "123e4567-e89b-12d3-a456-426614174000"
+    github = replace(
+        request(),
+        intent=DiscordTaskIntent.REVIEW,
+        source_reference_id="a" * 32,
+        repository_commit_sha="b" * 40,
+        task_id=request_id,
+    )
+
+    assert github.task_id == request_id
+    invalid = (
+        ({"intent": "review"}, "intent"),
+        ({"source_reference_id": "a" * 31}, "source_reference_id"),
+        ({"repository_commit_sha": "B" * 40}, "repository_commit_sha"),
+        ({"task_id": request_id.replace("-", "")}, "canonical UUID"),
+    )
+    for changes, message in invalid:
+        with pytest.raises(ValueError, match=message):
+            replace(request(), **changes)
+
+
+@pytest.mark.asyncio
+async def test_start_uses_preallocated_task_context_and_async_resolver(
+    tmp_path: Path,
+) -> None:
+    resolved: list[DiscordTaskRecord] = []
+    policy = execution_policy(AgentPolicyClass.REVIEW)
+
+    async def resolve(record: DiscordTaskRecord) -> AgentExecutionContext:
+        resolved.append(record)
+        return AgentExecutionContext(
+            channel_id=record.execution_channel_id,
+            trigger_event_id=record.trigger_event_id,
+            repository_full_name="Tue-StudyOS/example",
+            repository_commit_sha=record.repository_commit_sha,
+            execution_policy=policy,
+        )
+
+    harness = make_harness(tmp_path, execution_context_resolver=resolve)
+    release = harness.agent.block_channel(10)
+    task_id = "123e4567-e89b-12d3-a456-426614174000"
+    task = await harness.service.start(
+        request(
+            task_id=task_id,
+            intent=DiscordTaskIntent.REVIEW,
+            source_reference_id="a" * 32,
+            repository_commit_sha="b" * 40,
+        )
+    )
+    await harness.agent.ask_started.setdefault(10, asyncio.Event()).wait()
+
+    assert task.task_id == task_id
+    assert task.intent is DiscordTaskIntent.REVIEW
+    assert task.source_reference_id == "a" * 32
+    assert task.repository_commit_sha == "b" * 40
+    assert resolved == [harness.store.get(task_id)]
+    execution = cast(AgentExecutionContext, harness.agent.ask_calls[-1]["execution"])
+    assert execution.execution_policy == policy
+    assert not execution.require_existing_session
+
+    release.set()
+    await wait_for_state(harness.store, task_id, DiscordTaskState.COMPLETED)
+    await harness.service.close()
+
+
+@pytest.mark.asyncio
+async def test_restricted_task_without_resolver_fails_closed(tmp_path: Path) -> None:
+    harness = make_harness(tmp_path)
+
+    task = await harness.service.start(
+        request(
+            intent=DiscordTaskIntent.SECURITY_REVIEW,
+            source_reference_id="a" * 32,
+            repository_commit_sha="b" * 40,
+        )
+    )
+    failed = await wait_for_state(harness.store, task.task_id, DiscordTaskState.FAILED)
+
+    assert failed.failure is not None
+    assert failed.failure.category.value == "configuration"
+    assert harness.agent.ask_calls == []
+    await harness.service.close()
 
 
 @pytest.mark.asyncio
@@ -50,23 +143,17 @@ async def test_start_reserves_before_io_deduplicates_trigger_and_parallelizes_ch
 
     assert harness.store.get(first.task_id).state is DiscordTaskState.STARTING
     duplicate_inputs = TrackingAttachments()
-    duplicate = await harness.service.start(
-        request(attachments=duplicate_inputs)
-    )
+    duplicate = await harness.service.start(request(attachments=duplicate_inputs))
     assert duplicate.task_id == first.task_id
     assert duplicate_inputs.cleanup_calls == 1
 
     rejected_inputs = TrackingAttachments()
     with pytest.raises(DiscordTaskChannelBusy):
-        await harness.service.start(
-            request(trigger_event_id=101, attachments=rejected_inputs)
-        )
+        await harness.service.start(request(trigger_event_id=101, attachments=rejected_inputs))
     assert rejected_inputs.cleanup_calls == 1
 
     second_release = harness.agent.block_channel(11)
-    second = await harness.service.start(
-        request(channel_id=11, trigger_event_id=201)
-    )
+    second = await harness.service.start(request(channel_id=11, trigger_event_id=201))
     await wait_for_state(harness.store, second.task_id, DiscordTaskState.RUNNING)
     assert not card_release.is_set()
 
@@ -149,9 +236,7 @@ async def test_steer_requires_running_fresh_capability_and_always_cleans_inputs(
         origin_context=None,
     )
 
-    steered = await harness.service.steer(
-        task.task_id, access(), steer_request, interaction_id=500
-    )
+    steered = await harness.service.steer(task.task_id, access(), steer_request, interaction_id=500)
     duplicate = await harness.service.steer(
         task.task_id, access(), steer_request, interaction_id=500
     )
@@ -223,13 +308,9 @@ async def test_new_stop_interaction_retries_failed_interrupt_without_reclaiming(
         with pytest.raises(RuntimeError, match="interrupt transport failed"):
             await harness.service.stop(task.task_id, access(), interaction_id=601)
         claimed = harness.store.get(task.task_id)
-        duplicate = await harness.service.stop(
-            task.task_id, access(), interaction_id=601
-        )
+        duplicate = await harness.service.stop(task.task_id, access(), interaction_id=601)
         retried = await harness.service.stop(task.task_id, access(), interaction_id=602)
-        second_duplicate = await harness.service.stop(
-            task.task_id, access(), interaction_id=602
-        )
+        second_duplicate = await harness.service.stop(task.task_id, access(), interaction_id=602)
         revision_after_actions = harness.store.get(task.task_id).revision
     finally:
         release.set()

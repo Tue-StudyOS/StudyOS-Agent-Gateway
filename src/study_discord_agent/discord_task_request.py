@@ -1,8 +1,14 @@
 from dataclasses import dataclass
+from uuid import UUID
 
 from study_discord_agent.discord_origin import DiscordOriginContext
 from study_discord_agent.discord_task_inputs import StagedDiscordAttachments
-from study_discord_agent.discord_task_model import DiscordTaskSourceKind
+from study_discord_agent.discord_task_model import (
+    DiscordTaskIntent,
+    DiscordTaskSourceKind,
+    validate_repository_commit_sha,
+    validate_source_reference_id,
+)
 
 MAX_TASK_PROMPT_CHARS = 4_000
 MAX_TASK_SOURCE_LABEL_CHARS = 200
@@ -21,6 +27,10 @@ class DiscordTaskRequest:
     source_label: str
     attachments: StagedDiscordAttachments
     origin_context: DiscordOriginContext | None
+    intent: DiscordTaskIntent = DiscordTaskIntent.GENERAL
+    source_reference_id: str | None = None
+    repository_commit_sha: str | None = None
+    task_id: str | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -38,6 +48,11 @@ class DiscordTaskRequest:
             "source_label",
             MAX_TASK_SOURCE_LABEL_CHARS,
         )
+        if type(self.intent) is not DiscordTaskIntent:
+            raise ValueError("intent must be a Discord task intent")
+        validate_source_reference_id(self.source_reference_id)
+        validate_repository_commit_sha(self.repository_commit_sha)
+        _optional_canonical_uuid(self.task_id, "task_id")
 
 
 @dataclass(frozen=True)
@@ -65,3 +80,16 @@ def _optional_positive_id(value: object, name: str) -> None:
 def _bounded_text(value: object, name: str, maximum: int) -> None:
     if not isinstance(value, str) or not value.strip() or len(value) > maximum:
         raise ValueError(f"{name} must be between 1 and {maximum} characters")
+
+
+def _optional_canonical_uuid(value: object, name: str) -> None:
+    if value is None:
+        return
+    if not isinstance(value, str):
+        raise ValueError(f"{name} must be a canonical UUID")
+    try:
+        canonical = str(UUID(value))
+    except ValueError as error:
+        raise ValueError(f"{name} must be a canonical UUID") from error
+    if value != canonical:
+        raise ValueError(f"{name} must be a canonical UUID")

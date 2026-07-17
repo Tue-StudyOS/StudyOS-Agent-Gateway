@@ -6,6 +6,7 @@ from typing import Final, cast
 from study_discord_agent.discord_task_model import (
     DiscordTaskFailure,
     DiscordTaskFailureCategory,
+    DiscordTaskIntent,
     DiscordTaskInterruptionCause,
     DiscordTaskRecord,
     DiscordTaskRetryMode,
@@ -13,8 +14,8 @@ from study_discord_agent.discord_task_model import (
     DiscordTaskState,
 )
 
-SCHEMA_VERSION: Final = 1
-_RECORD_KEYS: Final = frozenset(
+SCHEMA_VERSION: Final = 2
+_V1_RECORD_KEYS: Final = frozenset(
     {
         "task_id",
         "revision",
@@ -38,6 +39,9 @@ _RECORD_KEYS: Final = frozenset(
         "continued_to_task_id",
     }
 )
+_RECORD_KEYS: Final = _V1_RECORD_KEYS | frozenset(
+    {"intent", "source_reference_id", "repository_commit_sha"}
+)
 
 
 def encode_document(tasks: Mapping[str, DiscordTaskRecord]) -> str:
@@ -54,16 +58,15 @@ def decode_document(serialized: str) -> dict[str, DiscordTaskRecord]:
     except json.JSONDecodeError as error:
         raise ValueError("document is not JSON") from error
     document = _object(payload, "document")
-    if (
-        set(document) != {"version", "tasks"}
-        or type(document["version"]) is not int
-        or document["version"] != SCHEMA_VERSION
-    ):
+    if set(document) != {"version", "tasks"}:
+        raise ValueError("unsupported document")
+    version = _integer(document["version"], "version")
+    if version not in {1, SCHEMA_VERSION}:
         raise ValueError("unsupported document")
     tasks = _object(document["tasks"], "tasks")
     result: dict[str, DiscordTaskRecord] = {}
     for task_id, raw_record in tasks.items():
-        record = _decode_record(raw_record)
+        record = _decode_record(raw_record, version)
         if record.task_id != task_id:
             raise ValueError("task key does not match task id")
         result[task_id] = record
@@ -101,12 +104,16 @@ def _encode_record(record: DiscordTaskRecord) -> dict[str, object]:
         ),
         "continued_from_task_id": record.continued_from_task_id,
         "continued_to_task_id": record.continued_to_task_id,
+        "intent": record.intent.value,
+        "source_reference_id": record.source_reference_id,
+        "repository_commit_sha": record.repository_commit_sha,
     }
 
 
-def _decode_record(payload: object) -> DiscordTaskRecord:
+def _decode_record(payload: object, version: int) -> DiscordTaskRecord:
     data = _object(payload, "task")
-    if frozenset(data) != _RECORD_KEYS:
+    expected_keys = _V1_RECORD_KEYS if version == 1 else _RECORD_KEYS
+    if frozenset(data) != expected_keys:
         raise ValueError("task keys do not match schema")
     failure_value = data["failure"]
     failure = None if failure_value is None else _decode_failure(failure_value)
@@ -133,6 +140,21 @@ def _decode_record(payload: object) -> DiscordTaskRecord:
             data["continued_from_task_id"], "continued_from_task_id"
         ),
         continued_to_task_id=_optional_string(data["continued_to_task_id"], "continued_to_task_id"),
+        intent=(
+            DiscordTaskIntent.GENERAL
+            if version == 1
+            else DiscordTaskIntent(_string(data["intent"], "intent"))
+        ),
+        source_reference_id=(
+            None
+            if version == 1
+            else _optional_string(data["source_reference_id"], "source_reference_id")
+        ),
+        repository_commit_sha=(
+            None
+            if version == 1
+            else _optional_string(data["repository_commit_sha"], "repository_commit_sha")
+        ),
     )
 
 

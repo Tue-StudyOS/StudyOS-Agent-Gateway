@@ -14,6 +14,10 @@ from study_discord_agent.discord_task_delivery import (
     DiscordTaskDelivery,
     DiscordTaskPresentation,
 )
+from study_discord_agent.discord_task_execution import (
+    AgentRunSpec,
+    DiscordTaskExecutionContextResolver,
+)
 from study_discord_agent.discord_task_inputs import retry_pending_staging_cleanups
 from study_discord_agent.discord_task_model import DiscordTaskRecord
 from study_discord_agent.discord_task_queries import DiscordTaskQueries
@@ -22,7 +26,7 @@ from study_discord_agent.discord_task_request import (
     DiscordTaskRequest,
     DiscordTaskSteerRequest,
 )
-from study_discord_agent.discord_task_runtime import AgentRunSpec, DiscordTaskRuntime
+from study_discord_agent.discord_task_runtime import DiscordTaskRuntime
 from study_discord_agent.discord_task_service_errors import (
     DiscordTaskActionUnavailable as DiscordTaskActionUnavailable,
 )
@@ -55,6 +59,7 @@ class DiscordTaskService:
         max_artifact_bytes: int,
         clock: Callable[[], datetime] | None = None,
         task_id_factory: Callable[[], str] | None = None,
+        execution_context_resolver: DiscordTaskExecutionContextResolver | None = None,
         claim_limit: int = 2_048,
     ) -> None:
         self._store = store
@@ -74,6 +79,7 @@ class DiscordTaskService:
             presentation=presentation,
             delivery=delivery,
             timestamp=self._clock,
+            execution_context_resolver=execution_context_resolver,
         )
         self._queries = DiscordTaskQueries(store, agent)
         self._actions = DiscordTaskActions(
@@ -115,7 +121,8 @@ class DiscordTaskService:
             request.attachments.cleanup()
             return existing
         try:
-            record = new_record(request, self._task_id_factory(), self._clock())
+            task_id = request.task_id or self._task_id_factory()
+            record = new_record(request, task_id, self._clock())
         except BaseException:
             request.attachments.cleanup()
             raise
@@ -123,9 +130,7 @@ class DiscordTaskService:
             persist_create(self._store, record)
         except ValueError as error:
             request.attachments.cleanup()
-            raise DiscordTaskChannelBusy(
-                "This channel already has an active task."
-            ) from error
+            raise DiscordTaskChannelBusy("This channel already has an active task.") from error
         except BaseException:
             request.attachments.cleanup()
             raise
@@ -178,9 +183,7 @@ class DiscordTaskService:
             interaction_id,
         )
 
-    async def forget(
-        self, task_id: str, access: DiscordTaskAccess, interaction_id: int
-    ) -> None:
+    async def forget(self, task_id: str, access: DiscordTaskAccess, interaction_id: int) -> None:
         self._ensure_open()
         await self._actions.forget(task_id, access, interaction_id)
 
@@ -204,9 +207,7 @@ class DiscordTaskService:
     ) -> DiscordTaskControlState:
         return await self._queries.resolve_controls(task_id, access)
 
-    async def refresh_card(
-        self, task_id: str, access: DiscordTaskAccess
-    ) -> DiscordTaskRecord:
+    async def refresh_card(self, task_id: str, access: DiscordTaskAccess) -> DiscordTaskRecord:
         record = self._queries.status(task_id, access)
         await self._runtime.render(record)
         return record

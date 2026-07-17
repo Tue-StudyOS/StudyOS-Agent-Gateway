@@ -1,72 +1,39 @@
 import asyncio
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from datetime import datetime
 from weakref import WeakValueDictionary
 
-from study_discord_agent.agent import AgentExecutionContext, AgentGateway, AgentReply
+from study_discord_agent.agent import AgentGateway, AgentReply
 from study_discord_agent.agent_errors import (
     AgentWorkspaceOrAttachmentError,
 )
-from study_discord_agent.discord_origin import DiscordOriginContext
 from study_discord_agent.discord_reply_content import PreparedDiscordReply
 from study_discord_agent.discord_task_delivery import (
     DiscordTaskDelivery,
     DiscordTaskDeliveryError,
     DiscordTaskPresentation,
 )
+from study_discord_agent.discord_task_execution import (
+    AgentRunSpec,
+    DiscordTaskExecutionContextResolver,
+    default_execution_context,
+    resolve_execution_context,
+)
 from study_discord_agent.discord_task_failures import classify_delivery_failure
-from study_discord_agent.discord_task_inputs import StagedDiscordAttachments
 from study_discord_agent.discord_task_model import (
     DiscordTaskFailure,
     DiscordTaskRecord,
-    DiscordTaskSourceKind,
     DiscordTaskState,
     transition,
 )
-from study_discord_agent.discord_task_request import DiscordTaskRequest
 from study_discord_agent.discord_task_runners import DiscordTaskRunners
 from study_discord_agent.discord_task_runtime_failures import record_agent_failure
 from study_discord_agent.discord_task_service_state import as_timestamp, persist_update
 from study_discord_agent.discord_task_store import DiscordTaskStore, TaskRevisionConflict
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class AgentRunSpec:
-    prompt: str
-    source_message_id: int | None
-    attachments: StagedDiscordAttachments
-    origin_context: DiscordOriginContext | None
-    recovering: bool = False
-    create_card: bool = False
-    require_existing_session: bool = False
-
-    @classmethod
-    def from_request(cls, request: DiscordTaskRequest) -> "AgentRunSpec":
-        return cls(
-            prompt=request.prompt,
-            source_message_id=request.source_message_id,
-            attachments=request.attachments,
-            origin_context=request.origin_context,
-            create_card=True,
-            require_existing_session=(
-                request.source_kind is DiscordTaskSourceKind.CONTINUATION
-            ),
-        )
-
-    @classmethod
-    def for_recovery(cls, prompt: str) -> "AgentRunSpec":
-        return cls(
-            prompt=prompt,
-            source_message_id=None,
-            attachments=StagedDiscordAttachments(paths=(), directory=None),
-            origin_context=None,
-            recovering=True,
-            require_existing_session=True,
-        )
 
 
 class DiscordTaskRuntime:
@@ -78,12 +45,14 @@ class DiscordTaskRuntime:
         presentation: DiscordTaskPresentation,
         delivery: DiscordTaskDelivery,
         timestamp: Callable[[], datetime],
+        execution_context_resolver: DiscordTaskExecutionContextResolver | None = None,
     ) -> None:
         self._agent = agent
         self._store = store
         self._presentation = presentation
         self._delivery = delivery
         self._timestamp = timestamp
+        self._execution_context_resolver = execution_context_resolver or default_execution_context
         self._runners = DiscordTaskRunners()
         self._render_locks = WeakValueDictionary[str, asyncio.Lock]()
 
@@ -153,6 +122,11 @@ class DiscordTaskRuntime:
                 return
             running = self._transition(current, DiscordTaskState.RUNNING)
             await self.render(running)
+            execution = await resolve_execution_context(
+                self._execution_context_resolver,
+                running,
+                require_existing_session=spec.require_existing_session,
+            )
             reply = await self._agent.ask(
                 spec.prompt,
                 str(running.owner_id),
@@ -161,11 +135,7 @@ class DiscordTaskRuntime:
                 attachment_paths=spec.attachments.paths,
                 origin_context=spec.origin_context,
                 on_progress=self._presentation.progress_sink(task_id),
-                execution=AgentExecutionContext(
-                    channel_id=running.execution_channel_id,
-                    trigger_event_id=running.trigger_event_id,
-                    require_existing_session=spec.require_existing_session,
-                ),
+                execution=execution,
             )
             await self._prepare_delivery(task_id, reply)
         except asyncio.CancelledError:
@@ -220,9 +190,7 @@ class DiscordTaskRuntime:
             return
         leased = self._delivery.consume(task_id)
         if leased is None:
-            raise AgentWorkspaceOrAttachmentError(
-                "Discord reply attachments could not be prepared"
-            )
+            raise AgentWorkspaceOrAttachmentError("Discord reply attachments could not be prepared")
         try:
             delivering = self._transition(current, DiscordTaskState.DELIVERING)
         except BaseException:
@@ -231,9 +199,7 @@ class DiscordTaskRuntime:
             raise
         await self._send_delivery(delivering.task_id, leased)
 
-    async def _send_delivery(
-        self, task_id: str, reply: PreparedDiscordReply
-    ) -> None:
+    async def _send_delivery(self, task_id: str, reply: PreparedDiscordReply) -> None:
         record = self._store.get(task_id)
         try:
             result_id = await self._delivery.send(record, reply)
