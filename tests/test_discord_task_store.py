@@ -158,7 +158,7 @@ def test_failed_atomic_write_does_not_publish_memory_or_disk_state(
     store = _store(tmp_path)
     store.create(_record())
     original = (tmp_path / "discord-tasks.json").read_bytes()
-    monkeypatch.setattr("study_discord_agent.discord_task_store.os.replace", _raise_replace)
+    monkeypatch.setattr("study_discord_agent.discord_task_persistence.os.replace", _raise_replace)
 
     with pytest.raises(OSError, match="disk unavailable"):
         store.compare_and_set(
@@ -182,7 +182,7 @@ def test_link_child_persists_both_records_or_neither(
         continued_from_task_id=parent.task_id,
     )
     store.create(parent)
-    monkeypatch.setattr("study_discord_agent.discord_task_store.os.replace", _raise_replace)
+    monkeypatch.setattr("study_discord_agent.discord_task_persistence.os.replace", _raise_replace)
 
     with pytest.raises(OSError):
         store.link_child(parent.task_id, 0, child)

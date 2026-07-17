@@ -16,19 +16,21 @@ def apply_retention(
     tasks: Mapping[str, DiscordTaskRecord], now: datetime
 ) -> dict[str, DiscordTaskRecord]:
     cutoff = _as_utc(now) - timedelta(days=RETENTION_DAYS)
-    active = {task_id: task for task_id, task in tasks.items() if task.state in ACTIVE_STATES}
-    inactive = [
-        task
-        for task in tasks.values()
-        if task.state not in ACTIVE_STATES
-        and _as_utc(datetime.fromisoformat(task.updated_at)) >= cutoff
-    ]
-    inactive.sort(
-        key=lambda task: (_as_utc(datetime.fromisoformat(task.updated_at)), task.task_id),
-        reverse=True,
-    )
-    retained = {task.task_id: task for task in inactive[:MAX_INACTIVE_TASKS]}
-    retained.update(active)
+    retained: dict[str, DiscordTaskRecord] = {}
+    inactive: list[set[str]] = []
+    for component in _components(tasks):
+        records = [tasks[task_id] for task_id in component]
+        if any(record.state in ACTIVE_STATES for record in records):
+            retained.update({record.task_id: record for record in records})
+        elif max(_updated_at(record) for record in records) >= cutoff:
+            inactive.append(component)
+    inactive.sort(key=lambda component: _component_key(component, tasks), reverse=True)
+    inactive_count = 0
+    for component in inactive:
+        if inactive_count + len(component) > MAX_INACTIVE_TASKS:
+            continue
+        retained.update({task_id: tasks[task_id] for task_id in component})
+        inactive_count += len(component)
     return retained
 
 
@@ -71,6 +73,35 @@ def _assert_acyclic(tasks: Mapping[str, DiscordTaskRecord]) -> None:
             chain.add(current)
             current = tasks[current].continued_to_task_id
         visited.update(chain)
+
+
+def _components(tasks: Mapping[str, DiscordTaskRecord]) -> tuple[set[str], ...]:
+    remaining = set(tasks)
+    components: list[set[str]] = []
+    while remaining:
+        component = {remaining.pop()}
+        pending = list(component)
+        while pending:
+            task_id = pending.pop()
+            record = tasks[task_id]
+            for linked in (record.continued_from_task_id, record.continued_to_task_id):
+                if linked is not None and linked not in component:
+                    component.add(linked)
+                    remaining.discard(linked)
+                    pending.append(linked)
+        components.append(component)
+    return tuple(components)
+
+
+def _component_key(
+    component: set[str], tasks: Mapping[str, DiscordTaskRecord]
+) -> tuple[datetime, str]:
+    newest = max((_updated_at(tasks[task_id]), task_id) for task_id in component)
+    return newest
+
+
+def _updated_at(record: DiscordTaskRecord) -> datetime:
+    return _as_utc(datetime.fromisoformat(record.updated_at))
 
 
 def _as_utc(value: datetime) -> datetime:

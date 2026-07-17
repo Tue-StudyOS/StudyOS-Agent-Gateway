@@ -121,6 +121,15 @@ class DiscordTaskRecord:
             raise ValueError(f"{self.state} cannot carry failure metadata")
         if self.state is DiscordTaskState.DELIVERY_FAILED:
             _validate_delivery_failure(self.failure)
+        if (
+            self.failure is not None
+            and (
+                self.failure.category is DiscordTaskFailureCategory.DISCORD_DELIVERY
+                or self.failure.retry_mode is DiscordTaskRetryMode.RETRY_DELIVERY
+            )
+            and self.state is not DiscordTaskState.DELIVERY_FAILED
+        ):
+            raise ValueError("delivery retry metadata is exclusive to delivery failure")
 
 
 ACTIVE_STATES: Final[frozenset[DiscordTaskState]] = frozenset(
@@ -187,7 +196,9 @@ def transition(
 ) -> DiscordTaskRecord:
     if not can_transition(record.state, target):
         raise InvalidDiscordTaskTransition(f"cannot transition {record.state} to {target}")
-    if target in {DiscordTaskState.COMPLETED, DiscordTaskState.STOPPED}:
+    if target in {DiscordTaskState.COMPLETED, DiscordTaskState.STOPPED} or (
+        record.state is DiscordTaskState.DELIVERY_FAILED and target is DiscordTaskState.DELIVERING
+    ):
         next_failure = None
     else:
         next_failure = failure or record.failure
@@ -196,7 +207,20 @@ def transition(
         state=target,
         updated_at=updated_at,
         failure=next_failure,
+        attempt=attempt_after_transition(record, target),
     )
+
+
+def attempt_after_transition(record: DiscordTaskRecord, target: DiscordTaskState) -> int:
+    retrying_agent = target is DiscordTaskState.RECOVERING and record.state in {
+        DiscordTaskState.FAILED,
+        DiscordTaskState.TIMED_OUT,
+        DiscordTaskState.INTERRUPTED,
+    }
+    retrying_delivery = (
+        record.state is DiscordTaskState.DELIVERY_FAILED and target is DiscordTaskState.DELIVERING
+    )
+    return record.attempt + 1 if retrying_agent or retrying_delivery else record.attempt
 
 
 def claim_interruption(

@@ -1,5 +1,3 @@
-import os
-import tempfile
 import threading
 from collections.abc import Callable, Mapping
 from dataclasses import replace
@@ -14,9 +12,11 @@ from study_discord_agent.discord_task_model import (
     DiscordTaskRecord,
     DiscordTaskRetryMode,
     DiscordTaskState,
+    attempt_after_transition,
     can_transition,
     claim_interruption,
 )
+from study_discord_agent.discord_task_persistence import TaskStoreDurabilityError, write_document
 from study_discord_agent.discord_task_serialization import decode_document, encode_document
 from study_discord_agent.discord_task_store_policy import (
     apply_retention,
@@ -50,6 +50,8 @@ class DiscordTaskStore:
                 raise TaskAlreadyExists(record.task_id)
             if record.continued_from_task_id is not None or record.continued_to_task_id is not None:
                 raise ValueError("continuation links may only be created by link_child")
+            if record.attempt != 1:
+                raise ValueError("new tasks must start at attempt one")
             self._ensure_execution_available(record, self._tasks)
             tasks = dict(self._tasks)
             tasks[record.task_id] = record
@@ -87,6 +89,8 @@ class DiscordTaskStore:
     def link_child(
         self, parent_id: str, expected_revision: int, child: DiscordTaskRecord
     ) -> tuple[DiscordTaskRecord, DiscordTaskRecord]:
+        if type(expected_revision) is not int or expected_revision < 0:
+            raise ValueError("expected_revision must be a non-negative integer")
         with self._lock:
             parent = self._tasks[parent_id]
             if parent.revision != expected_revision:
@@ -98,6 +102,8 @@ class DiscordTaskStore:
                 raise ValueError("only an unlinked completed task can continue")
             if child.task_id in self._tasks:
                 raise TaskAlreadyExists(child.task_id)
+            if child.attempt != 1:
+                raise ValueError("continuation child must start at attempt one")
             if (
                 child.state is not DiscordTaskState.STARTING
                 or child.continued_from_task_id != parent.task_id
@@ -150,31 +156,16 @@ class DiscordTaskStore:
 
     def _commit(self, tasks: dict[str, DiscordTaskRecord]) -> None:
         retained = apply_retention(tasks, self._clock())
-        self._write(retained)
-        self._tasks = retained
+        try:
+            self._write(retained)
+        except TaskStoreDurabilityError:
+            self._tasks = retained
+            raise
+        else:
+            self._tasks = retained
 
     def _write(self, tasks: Mapping[str, DiscordTaskRecord]) -> None:
-        document = encode_document(tasks)
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        descriptor, temporary_name = tempfile.mkstemp(
-            prefix=f".{self._path.name}.", suffix=".tmp", dir=self._path.parent
-        )
-        temporary_path = Path(temporary_name)
-        try:
-            os.fchmod(descriptor, 0o600)
-            output = os.fdopen(descriptor, "w", encoding="utf-8")
-            descriptor = None
-            with output:
-                output.write(document)
-                output.flush()
-                os.fsync(output.fileno())
-            os.replace(temporary_path, self._path)
-            _fsync_directory(self._path.parent)
-        finally:
-            if descriptor is not None:
-                os.close(descriptor)
-            if temporary_path.exists():
-                temporary_path.unlink()
+        write_document(self._path, encode_document(tasks))
 
     @staticmethod
     def _ensure_execution_available(
@@ -210,10 +201,12 @@ class DiscordTaskStore:
         )
         if any(getattr(current, field) != getattr(candidate, field) for field in immutable):
             raise ValueError("task identity fields cannot change")
-        if candidate.revision != current.revision or candidate.attempt < current.attempt:
-            raise ValueError("task revision cannot be supplied and attempt cannot decrease")
+        if candidate.revision != current.revision:
+            raise ValueError("task revision cannot be supplied")
         if candidate.state != current.state and not can_transition(current.state, candidate.state):
             raise ValueError("task state transition is not allowed")
+        if candidate.attempt != attempt_after_transition(current, candidate.state):
+            raise ValueError("task attempt does not match its state transition")
         if (
             current.interruption_cause is not None
             and candidate.interruption_cause != current.interruption_cause
@@ -274,11 +267,3 @@ def _as_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         raise ValueError("timestamp must have a timezone")
     return value.astimezone(UTC)
-
-
-def _fsync_directory(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)

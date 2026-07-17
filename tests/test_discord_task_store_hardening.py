@@ -207,10 +207,10 @@ def test_retention_orders_inactive_records_by_normalized_utc_time(tmp_path: Path
 def test_failed_file_permission_change_closes_descriptor_and_cleans_tempfile(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import study_discord_agent.discord_task_store as store_module
+    import study_discord_agent.discord_task_persistence as persistence
 
     descriptor: list[int] = []
-    original_mkstemp = store_module.tempfile.mkstemp
+    original_mkstemp = persistence.tempfile.mkstemp
 
     def capture_mkstemp(
         *, suffix: str | None = None, prefix: str | None = None, dir: Path | None = None
@@ -222,8 +222,8 @@ def test_failed_file_permission_change_closes_descriptor_and_cleans_tempfile(
     def fail_fchmod(fd: int, mode: int) -> None:
         raise OSError("chmod unavailable")
 
-    monkeypatch.setattr(store_module.tempfile, "mkstemp", capture_mkstemp)
-    monkeypatch.setattr(store_module.os, "fchmod", fail_fchmod)
+    monkeypatch.setattr(persistence.tempfile, "mkstemp", capture_mkstemp)
+    monkeypatch.setattr(persistence.os, "fchmod", fail_fchmod)
     store = DiscordTaskStore(tmp_path / "discord-tasks.json")
 
     with pytest.raises(OSError, match="chmod unavailable"):
