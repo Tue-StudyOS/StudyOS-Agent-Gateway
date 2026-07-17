@@ -8,9 +8,15 @@ from study_discord_agent.agent import AgentGateway
 from study_discord_agent.config import Settings
 from study_discord_agent.discord_files import DISCORD_MESSAGE_LIMIT
 from study_discord_agent.discord_markdown import discord_safe_markdown
-from study_discord_agent.discord_mentions import DiscordMentionCoordinator
 from study_discord_agent.discord_message_context import (
     origin_context_from_message,
+)
+from study_discord_agent.discord_task_application import (
+    DiscordTaskApplication,
+    create_discord_task_application,
+)
+from study_discord_agent.discord_task_component_controller import (
+    DiscordTaskInteractionController,
 )
 from study_discord_agent.github_client import GitHubClient
 from study_discord_agent.github_events import DiscordNotification
@@ -20,6 +26,8 @@ logger = logging.getLogger(__name__)
 
 
 class StudyBot(commands.Bot):
+    discord_task_component_controller: DiscordTaskInteractionController
+
     def __init__(
         self,
         settings: Settings,
@@ -34,19 +42,38 @@ class StudyBot(commands.Bot):
         self.github = github
         self.agent = agent
         self.queue = queue
-        self._mentions = DiscordMentionCoordinator(settings, agent)
+        self.discord_tasks: DiscordTaskApplication = create_discord_task_application(
+            self,
+            settings,
+            agent,
+        )
+        self.discord_tasks.register(self)
+        self._mentions = self.discord_tasks.mentions
 
     async def setup_hook(self) -> None:
         if self.settings.discord_guild_id:
             guild = discord.Object(id=self.settings.discord_guild_id)
-            self.tree.clear_commands(guild=guild)
+            self.tree.copy_global_to(guild=guild)
             await self.tree.sync(guild=guild)
         else:
-            self.tree.clear_commands(guild=None)
             await self.tree.sync()
+        self.discord_tasks.start_reconciliation(self.wait_until_ready)
         self.loop.create_task(self._notification_worker())
         if self.settings.discord_proactive_agent_enabled:
             self.loop.create_task(ProactiveMonitor(self, self.settings, self.agent).run())
+
+    async def close(self) -> None:
+        first_error: BaseException | None = None
+        try:
+            await self.discord_tasks.close()
+        except BaseException as error:
+            first_error = error
+        try:
+            await super().close()
+        except BaseException as error:
+            first_error = first_error or error
+        if first_error is not None:
+            raise first_error
 
     async def _notification_worker(self) -> None:
         await self.wait_until_ready()
