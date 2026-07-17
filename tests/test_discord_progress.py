@@ -194,10 +194,12 @@ async def test_active_plan_step_cycles_through_ascii_spinner() -> None:
             plan=(AgentPlanStep("Build the progress card", "inProgress"),)
         )
     )
-    await asyncio.sleep(0.045)
+    assert source.status is not None
+    async with asyncio.timeout(0.5):
+        while len(source.status.rendered_edits) < 5:
+            await asyncio.sleep(0.005)
     await progress.delete()
 
-    assert source.status is not None
     spinner_markers = [
         next(
             marker
