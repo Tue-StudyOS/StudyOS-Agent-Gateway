@@ -9,6 +9,10 @@ from uuid import uuid4
 import pytest
 
 from study_discord_agent.discord_task_persistence import TaskStoreDurabilityError
+from study_discord_agent.github_mirror_action_store import (
+    GitHubMirrorActionBusy,
+    GitHubMirrorActionStore,
+)
 from study_discord_agent.github_mirror_model import (
     GitHubHandledActionClaim,
     GitHubItemKind,
@@ -230,7 +234,6 @@ def test_operational_references_are_opaque_and_survive_webhook_upsert(tmp_path: 
         lambda current: replace(
             current,
             pending_action=pending,
-            active_task_id=task_id,
             thread_id=30,
         ),
     )
@@ -242,10 +245,53 @@ def test_operational_references_are_opaque_and_survive_webhook_upsert(tmp_path: 
     ).record
 
     assert retained.pending_action == pending
-    assert retained.active_task_id == task_id
     assert retained.thread_id == 30
     with pytest.raises(ValueError, match="opaque"):
-        replace(claimed, active_task_id="copied prompt or secret")
+        replace(
+            claimed,
+            pending_action=None,
+            active_task_id="copied prompt or secret",
+        )
+
+
+def test_action_reservation_is_durable_idempotent_and_exclusive(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    record = store.upsert_event(_event(), guild_id=10, channel_id=20).record
+    actions = GitHubMirrorActionStore(store, clock=lambda: NOW)
+    task_id = str(uuid4())
+
+    reservation = actions.reserve(
+        record.mirror_id,
+        123,
+        GitHubMirrorAction.SECURITY_REVIEW,
+        task_id,
+    )
+    duplicate = actions.reserve(
+        record.mirror_id,
+        123,
+        GitHubMirrorAction.SECURITY_REVIEW,
+        str(uuid4()),
+    )
+    with pytest.raises(GitHubMirrorActionBusy):
+        actions.reserve(
+            record.mirror_id,
+            124,
+            GitHubMirrorAction.REVIEW,
+            str(uuid4()),
+        )
+
+    assert reservation.accepted
+    assert not duplicate.accepted
+    assert duplicate.task_id == task_id
+    actions.attach_thread(record.mirror_id, task_id, 30)
+    completed = actions.finish(record.mirror_id, task_id, succeeded=True)
+    assert completed.pending_action is None
+    assert completed.active_task_id == task_id
+    assert completed.handled_interaction_claims[-1].succeeded
+    assert GitHubMirrorStore(tmp_path / "github-mirrors.json").get(
+        record.mirror_id
+    ) == completed
+    assert actions.clear_active(record.mirror_id, task_id).active_task_id is None
 
 
 def test_typed_event_rejects_unsupported_action() -> None:

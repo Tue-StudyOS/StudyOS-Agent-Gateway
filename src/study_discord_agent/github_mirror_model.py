@@ -198,6 +198,15 @@ class GitHubMirrorRecord:
         if len(set(self.recent_delivery_ids)) != len(self.recent_delivery_ids):
             raise ValueError("recent delivery IDs must be unique")
         claim_ids = [claim.interaction_id for claim in self.handled_interaction_claims]
+        if self.pending_action is not None and type(self.pending_action) is not GitHubPendingAction:
+            raise ValueError("pending_action must use the declared type")
+        if any(
+            type(claim) is not GitHubHandledActionClaim
+            for claim in self.handled_interaction_claims
+        ):
+            raise ValueError("handled claims must use the declared type")
+        if self.pending_action is not None and self.active_task_id is not None:
+            raise ValueError("a mirror cannot have pending and active tasks")
         if len(set(claim_ids)) != len(claim_ids):
             raise ValueError("handled interaction claims must be unique")
         if self.active_task_id is not None:
