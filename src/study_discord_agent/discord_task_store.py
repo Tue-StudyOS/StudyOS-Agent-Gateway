@@ -18,6 +18,7 @@ from study_discord_agent.discord_task_model import (
 )
 from study_discord_agent.discord_task_persistence import TaskStoreDurabilityError, write_document
 from study_discord_agent.discord_task_serialization import decode_document, encode_document
+from study_discord_agent.discord_task_store_mutations import forget_inactive_task
 from study_discord_agent.discord_task_store_policy import (
     apply_retention,
     same_task_scope,
@@ -140,6 +141,23 @@ class DiscordTaskStore:
                 self._commit(tasks)
         return tuple(changed)
 
+    def forget(
+        self, task_id: str, expected_revision: int
+    ) -> tuple[DiscordTaskRecord, ...]:
+        if type(expected_revision) is not int or expected_revision < 0:
+            raise ValueError("expected_revision must be a non-negative integer")
+        with self._lock:
+            current = self._tasks[task_id]
+            if current.revision != expected_revision:
+                raise TaskRevisionConflict(task_id)
+            tasks, neighbors = forget_inactive_task(
+                self._tasks,
+                task_id,
+                updated_at=_timestamp(self._clock()),
+            )
+            self._commit(tasks)
+            return neighbors
+
     def _load(self) -> dict[str, DiscordTaskRecord]:
         if not self._path.exists():
             return {}
@@ -212,10 +230,12 @@ class DiscordTaskStore:
             and candidate.interruption_cause != current.interruption_cause
         ):
             raise ValueError("the first interruption cause is immutable")
-        if candidate.interruption_cause is not None and current.state in {
-            DiscordTaskState.DELIVERING,
-            DiscordTaskState.COMPLETED,
-        }:
+        if (
+            current.interruption_cause is None
+            and candidate.interruption_cause is not None
+            and current.state
+            in {DiscordTaskState.DELIVERING, DiscordTaskState.COMPLETED}
+        ):
             raise ValueError("delivery and completion cannot claim interruption")
 
 
