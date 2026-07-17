@@ -120,7 +120,6 @@ class DiscordTaskActions:
         if record.state is DiscordTaskState.STOPPING:
             self._interactions.remember(interaction_id, task_id)
             await self._agent.interrupt(record.execution_channel_id)
-            await self._runtime.render(record)
             return self._store.get(task_id)
         if record.state not in {
             DiscordTaskState.RECOVERING,
@@ -140,8 +139,8 @@ class DiscordTaskActions:
                 "This task changed before Stop was accepted."
             ) from error
         self._interactions.remember(interaction_id, task_id)
-        await self._agent.interrupt(stopping.execution_channel_id)
         await self._runtime.render(stopping)
+        await self._agent.interrupt(stopping.execution_channel_id)
         return self._store.get(task_id)
 
     async def retry(

@@ -84,6 +84,7 @@ class DiscordTaskRuntime:
         self._delivery = delivery
         self._timestamp = timestamp
         self._runners = DiscordTaskRunners()
+        self._render_locks: dict[str, asyncio.Lock] = {}
 
     def spawn_agent(self, task_id: str, spec: AgentRunSpec) -> None:
         self._runners.spawn(task_id, self._agent_runner(task_id, spec))
@@ -107,10 +108,13 @@ class DiscordTaskRuntime:
         self._delivery.discard(task_id)
 
     async def render(self, record: DiscordTaskRecord) -> None:
-        try:
-            await self._presentation.render_card(record)
-        except Exception:
-            logger.warning("Discord task card render failed task_id=%s", record.task_id)
+        lock = self._render_locks.setdefault(record.task_id, asyncio.Lock())
+        async with lock:
+            try:
+                current = self._store.get(record.task_id)
+                await self._presentation.render_card(current)
+            except Exception:
+                logger.warning("Discord task card render failed task_id=%s", record.task_id)
 
     async def close(self) -> None:
         await self._runners.close()

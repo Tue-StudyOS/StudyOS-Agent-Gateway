@@ -1,10 +1,12 @@
 import asyncio
 from pathlib import Path
+from typing import cast
 
 import pytest
 
 from study_discord_agent.agent import AgentChannelCapabilities, AgentReply
 from study_discord_agent.discord_task_delivery import DiscordTaskDeliveryError
+from study_discord_agent.discord_task_inputs import StagedDiscordAttachments
 from study_discord_agent.discord_task_model import (
     DiscordTaskFailure,
     DiscordTaskFailureCategory,
@@ -13,6 +15,7 @@ from study_discord_agent.discord_task_model import (
     DiscordTaskSourceKind,
     DiscordTaskState,
 )
+from study_discord_agent.discord_task_request import DiscordTaskSteerRequest
 from study_discord_agent.discord_task_runners import DiscordTaskRunners
 from study_discord_agent.discord_task_service import DiscordTaskServiceClosed
 from tests.test_discord_task_service_fixtures import (
@@ -21,6 +24,7 @@ from tests.test_discord_task_service_fixtures import (
     make_harness,
     request,
     stored_record,
+    wait_for_state,
 )
 
 RESUMABLE_FAILURE = DiscordTaskFailure(
@@ -192,3 +196,104 @@ def _live_discord_runner_tasks() -> tuple[asyncio.Task[object], ...]:
         for task in asyncio.all_tasks()
         if task.get_name().startswith("discord-task:") and not task.done()
     )
+
+
+@pytest.mark.asyncio
+async def test_stop_does_not_render_stopping_after_runner_reaches_stopped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    harness = make_harness(tmp_path)
+    release = harness.agent.block_channel(10)
+    task = await harness.service.start(request())
+    await wait_for_state(harness.store, task.task_id, DiscordTaskState.RUNNING)
+    harness.presentation.render_calls.clear()
+
+    async def interrupt_after_completion(_channel_id: int) -> bool:
+        release.set()
+        await wait_for_state(harness.store, task.task_id, DiscordTaskState.STOPPED)
+        return True
+
+    monkeypatch.setattr(harness.agent, "interrupt", interrupt_after_completion)
+
+    stopped = await harness.service.stop(task.task_id, access(), interaction_id=603)
+    await harness.service.close()
+
+    assert stopped.state is DiscordTaskState.STOPPED
+    assert [record.state for record in harness.presentation.render_calls] == [
+        DiscordTaskState.STOPPING,
+        DiscordTaskState.STOPPED,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_retried_stop_does_not_render_stopping_after_runner_reaches_stopped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    harness = make_harness(tmp_path)
+    release = harness.agent.block_channel(10)
+    task = await harness.service.start(request())
+    await wait_for_state(harness.store, task.task_id, DiscordTaskState.RUNNING)
+
+    async def failed_interrupt(_channel_id: int) -> bool:
+        raise RuntimeError("interrupt transport failed")
+
+    monkeypatch.setattr(harness.agent, "interrupt", failed_interrupt)
+    with pytest.raises(RuntimeError, match="interrupt transport failed"):
+        await harness.service.stop(task.task_id, access(), interaction_id=604)
+    harness.presentation.render_calls.clear()
+
+    async def interrupt_after_completion(_channel_id: int) -> bool:
+        release.set()
+        await wait_for_state(harness.store, task.task_id, DiscordTaskState.STOPPED)
+        return True
+
+    monkeypatch.setattr(harness.agent, "interrupt", interrupt_after_completion)
+
+    stopped = await harness.service.stop(task.task_id, access(), interaction_id=605)
+    await harness.service.close()
+
+    assert stopped.state is DiscordTaskState.STOPPED
+    assert [record.state for record in harness.presentation.render_calls] == [
+        DiscordTaskState.STOPPED
+    ]
+
+
+@pytest.mark.asyncio
+async def test_closed_service_cleans_unaccepted_start_steer_and_continue_inputs(
+    tmp_path: Path,
+) -> None:
+    harness = make_harness(tmp_path)
+    await harness.service.close()
+    start_inputs = TrackingAttachments()
+    steer_inputs = TrackingAttachments()
+    continue_inputs = TrackingAttachments()
+
+    with pytest.raises(DiscordTaskServiceClosed):
+        await harness.service.start(request(attachments=start_inputs))
+    with pytest.raises(DiscordTaskServiceClosed):
+        await harness.service.steer(
+            "00000000000000000000000000000001",
+            access(),
+            DiscordTaskSteerRequest(
+                "more context",
+                None,
+                cast(StagedDiscordAttachments, steer_inputs),
+                None,
+            ),
+            interaction_id=606,
+        )
+    with pytest.raises(DiscordTaskServiceClosed):
+        await harness.service.continue_task(
+            "00000000000000000000000000000001",
+            access(),
+            request(
+                trigger_event_id=607,
+                attachments=continue_inputs,
+                source_kind=DiscordTaskSourceKind.CONTINUATION,
+            ),
+            interaction_id=607,
+        )
+
+    assert start_inputs.cleanup_calls == 1
+    assert steer_inputs.cleanup_calls == 1
+    assert continue_inputs.cleanup_calls == 1

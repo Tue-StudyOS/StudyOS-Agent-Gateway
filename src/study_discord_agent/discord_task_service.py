@@ -96,7 +96,11 @@ class DiscordTaskService:
         self._close_complete = False
 
     async def start(self, request: DiscordTaskRequest) -> DiscordTaskRecord:
-        self._ensure_open()
+        try:
+            self._ensure_open()
+        except DiscordTaskServiceClosed:
+            request.attachments.cleanup()
+            raise
         claimed_task_id = self._triggers.existing(request.trigger_event_id)
         if claimed_task_id is not None:
             request.attachments.cleanup()
@@ -136,7 +140,11 @@ class DiscordTaskService:
         request: DiscordTaskSteerRequest,
         interaction_id: int,
     ) -> DiscordTaskRecord:
-        self._ensure_open()
+        try:
+            self._ensure_open()
+        except DiscordTaskServiceClosed:
+            request.attachments.cleanup()
+            raise
         return await self._actions.steer(task_id, access, request, interaction_id)
 
     async def stop(
@@ -158,7 +166,11 @@ class DiscordTaskService:
         request: DiscordTaskRequest,
         interaction_id: int,
     ) -> DiscordTaskRecord:
-        self._ensure_open()
+        try:
+            self._ensure_open()
+        except DiscordTaskServiceClosed:
+            request.attachments.cleanup()
+            raise
         return await self._actions.continue_task(
             parent_id,
             access,
