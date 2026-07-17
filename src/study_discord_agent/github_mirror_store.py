@@ -1,7 +1,8 @@
+import secrets
 import threading
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -15,7 +16,13 @@ from study_discord_agent.github_mirror_model import (
 )
 from study_discord_agent.github_mirror_serialization import decode_document, encode_document
 from study_discord_agent.github_mirror_store_updates import (
+    attach_card_record,
+    claim_card_record,
+    clear_card_record,
+    complete_card_cleanup_record,
+    queue_card_cleanup_record,
     record_from_event,
+    release_card_creation_record,
     update_from_event,
     updated_record,
 )
@@ -81,9 +88,7 @@ class GitHubMirrorStore:
     ) -> GitHubMirrorRecord | None:
         with self._canonical_records() as records:
             key = (repository, kind, number)
-            return next(
-                (record for record in records.values() if record.logical_key == key), None
-            )
+            return next((record for record in records.values() if record.logical_key == key), None)
 
     def upsert_event(
         self, event: GitHubMirrorEvent, *, guild_id: int, channel_id: int
@@ -152,7 +157,7 @@ class GitHubMirrorStore:
             return updated
 
     def attach_card_if_missing(
-        self, mirror_id: str, message_id: int
+        self, mirror_id: str, message_id: int, creation_nonce: str
     ) -> tuple[GitHubMirrorRecord, bool]:
         self._reject_callback_mutation()
         if type(message_id) is not int or message_id <= 0:
@@ -160,14 +165,23 @@ class GitHubMirrorStore:
         with self._canonical_records() as records:
             current = records[mirror_id]
             if current.card_message_id is not None:
-                return current, False
-            updated = updated_record(
+                if current.card_cleanup_nonce == creation_nonce:
+                    return current, False
+                if current.card_cleanup_nonce is not None:
+                    raise GitHubMirrorRevisionConflict(mirror_id)
+                updated = queue_card_cleanup_record(
+                    current, creation_nonce, _timestamp(self._clock())
+                )
+                updated_records = dict(records)
+                updated_records[mirror_id] = updated
+                self._commit(updated_records)
+                return updated, False
+            if current.card_create_nonce != creation_nonce:
+                raise GitHubMirrorRevisionConflict(mirror_id)
+            updated = attach_card_record(
                 current,
-                lambda record: replace(
-                    record,
-                    card_message_id=message_id,
-                    card_create_pending=False,
-                ),
+                message_id,
+                creation_nonce,
                 _timestamp(self._clock()),
             )
             updated_records = dict(records)
@@ -175,17 +189,15 @@ class GitHubMirrorStore:
             self._commit(updated_records)
             return updated, True
 
-    def claim_card_creation(
-        self, mirror_id: str
-    ) -> tuple[GitHubMirrorRecord, bool]:
+    def claim_card_creation(self, mirror_id: str) -> tuple[GitHubMirrorRecord, bool]:
         self._reject_callback_mutation()
         with self._canonical_records() as records:
             current = records[mirror_id]
             if current.card_message_id is not None or current.card_create_pending:
                 return current, False
-            updated = updated_record(
+            updated = claim_card_record(
                 current,
-                lambda record: replace(record, card_create_pending=True),
+                f"gm:{secrets.token_urlsafe(16)}",
                 _timestamp(self._clock()),
             )
             updated_records = dict(records)
@@ -193,17 +205,28 @@ class GitHubMirrorStore:
             self._commit(updated_records)
             return updated, True
 
-    def release_card_creation(self, mirror_id: str) -> GitHubMirrorRecord:
+    def release_card_creation(self, mirror_id: str, creation_nonce: str) -> GitHubMirrorRecord:
         self._reject_callback_mutation()
         with self._canonical_records() as records:
             current = records[mirror_id]
-            if current.card_message_id is not None or not current.card_create_pending:
+            if current.card_message_id is not None or current.card_create_nonce != creation_nonce:
                 return current
-            updated = updated_record(
+            updated = release_card_creation_record(
                 current,
-                lambda record: replace(record, card_create_pending=False),
                 _timestamp(self._clock()),
             )
+            updated_records = dict(records)
+            updated_records[mirror_id] = updated
+            self._commit(updated_records)
+            return updated
+
+    def complete_card_cleanup(self, mirror_id: str, cleanup_nonce: str) -> GitHubMirrorRecord:
+        self._reject_callback_mutation()
+        with self._canonical_records() as records:
+            current = records[mirror_id]
+            if current.card_cleanup_nonce != cleanup_nonce:
+                return current
+            updated = complete_card_cleanup_record(current, _timestamp(self._clock()))
             updated_records = dict(records)
             updated_records[mirror_id] = updated
             self._commit(updated_records)
@@ -215,15 +238,7 @@ class GitHubMirrorStore:
             current = records[mirror_id]
             if current.card_message_id != message_id:
                 return current
-            updated = updated_record(
-                current,
-                lambda record: replace(
-                    record,
-                    card_message_id=None,
-                    card_create_pending=False,
-                ),
-                _timestamp(self._clock()),
-            )
+            updated = clear_card_record(current, _timestamp(self._clock()))
             updated_records = dict(records)
             updated_records[mirror_id] = updated
             self._commit(updated_records)

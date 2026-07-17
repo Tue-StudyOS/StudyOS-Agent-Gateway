@@ -1,3 +1,4 @@
+from collections.abc import AsyncIterator
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -57,8 +58,11 @@ class ForbiddenResponse:
 
 
 class FakeMessage:
-    def __init__(self, message_id: int) -> None:
+    def __init__(self, message_id: int, *, nonce: str, channel: "FakeChannel") -> None:
         self.id = message_id
+        self.nonce = nonce
+        self.author = channel.guild.me
+        self.channel = channel
         self.edits: list[dict[str, object]] = []
         self.deleted = False
 
@@ -68,13 +72,14 @@ class FakeMessage:
 
     async def delete(self) -> None:
         self.deleted = True
+        self.channel.messages.pop(self.id, None)
 
 
 class FakeChannel(discord.abc.Messageable):
     def __init__(self, *, permissions: object | None = None) -> None:
         self.id = 20
         self.type = discord.ChannelType.text
-        self.guild = SimpleNamespace(id=10, me=object())
+        self.guild = SimpleNamespace(id=10, me=SimpleNamespace(id=99))
         self._permissions = permissions or SimpleNamespace(
             view_channel=True,
             send_messages=True,
@@ -91,7 +96,11 @@ class FakeChannel(discord.abc.Messageable):
         return self._permissions
 
     async def send(self, **kwargs: object) -> FakeMessage:  # pyright: ignore[reportIncompatibleMethodOverride]
-        message = FakeMessage(100 + len(self.sent))
+        message = FakeMessage(
+            100 + len(self.sent),
+            nonce=cast(str, kwargs["nonce"]),
+            channel=self,
+        )
         self.messages[message.id] = message
         self.sent.append((message, kwargs))
         return message
@@ -102,6 +111,13 @@ class FakeChannel(discord.abc.Messageable):
         if message_id not in self.messages:
             raise discord.NotFound(cast(Any, FakeResponse()), "missing")
         return self.messages[message_id]
+
+    async def history(  # pyright: ignore[reportIncompatibleMethodOverride]
+        self, *, limit: int
+    ) -> AsyncIterator[FakeMessage]:
+        for message, _ in tuple(reversed(self.sent[-limit:])):
+            if message.id in self.messages:
+                yield message
 
 
 class FakeClient:
@@ -211,7 +227,14 @@ async def test_revoked_channel_access_is_a_typed_failure_without_recreation(
 @pytest.mark.asyncio
 async def test_create_race_deletes_orphan_card(tmp_path: Path) -> None:
     class RacingStore(GitHubMirrorStore):
-        def attach_card_if_missing(self, mirror_id: str, message_id: int):  # type: ignore[no-untyped-def]
+        def attach_card_if_missing(  # type: ignore[no-untyped-def]
+            self, mirror_id: str, message_id: int, creation_nonce: str
+        ):
+            channel.messages[777] = FakeMessage(
+                777,
+                nonce=creation_nonce,
+                channel=channel,
+            )
             current = self.get(mirror_id)
             winner = self.compare_and_set(
                 mirror_id,
@@ -220,6 +243,8 @@ async def test_create_race_deletes_orphan_card(tmp_path: Path) -> None:
                     record,
                     card_message_id=777,
                     card_create_pending=False,
+                    card_create_nonce=None,
+                    card_cleanup_nonce=creation_nonce,
                 ),
             )
             return winner, False
@@ -239,7 +264,9 @@ async def test_create_race_deletes_orphan_card(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_precommit_attach_failure_deletes_new_orphan(tmp_path: Path) -> None:
     class FailingStore(GitHubMirrorStore):
-        def attach_card_if_missing(self, mirror_id: str, message_id: int):  # type: ignore[no-untyped-def]
+        def attach_card_if_missing(  # type: ignore[no-untyped-def]
+            self, mirror_id: str, message_id: int, creation_nonce: str
+        ):
             raise OSError("store unavailable")
 
     channel = FakeChannel()

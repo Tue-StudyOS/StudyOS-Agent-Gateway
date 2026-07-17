@@ -191,8 +191,12 @@ def test_store_persists_strict_private_bounded_metadata_and_reloads(tmp_path: Pa
 def test_card_compare_and_set_helpers_preserve_task_fields(tmp_path: Path) -> None:
     store = _store(tmp_path)
     record = store.upsert_event(_event(), guild_id=10, channel_id=20).record
-    attached, won = store.attach_card_if_missing(record.mirror_id, 99)
-    raced, second_won = store.attach_card_if_missing(record.mirror_id, 100)
+    claimed, claim_won = store.claim_card_creation(record.mirror_id)
+    assert claim_won and claimed.card_create_nonce is not None
+    attached, won = store.attach_card_if_missing(record.mirror_id, 99, claimed.card_create_nonce)
+    raced, second_won = store.attach_card_if_missing(
+        record.mirror_id, 100, claimed.card_create_nonce
+    )
     retained = store.upsert_event(
         _event("delivery-2", updated_at=NOW + timedelta(seconds=1)),
         guild_id=10,
@@ -254,6 +258,8 @@ def test_atomic_failure_and_post_replace_durability_semantics(
 
     store = _store(tmp_path)
     record = store.upsert_event(_event(), guild_id=10, channel_id=20).record
+    claimed, _ = store.claim_card_creation(record.mirror_id)
+    assert claimed.card_create_nonce is not None
     before = (tmp_path / "github-mirrors.json").read_bytes()
 
     def fail_replace(*_: object) -> None:
@@ -261,7 +267,7 @@ def test_atomic_failure_and_post_replace_durability_semantics(
 
     monkeypatch.setattr(persistence.os, "replace", fail_replace)
     with pytest.raises(OSError, match="disk"):
-        store.attach_card_if_missing(record.mirror_id, 99)
+        store.attach_card_if_missing(record.mirror_id, 99, claimed.card_create_nonce)
     assert store.get(record.mirror_id).card_message_id is None
     assert (tmp_path / "github-mirrors.json").read_bytes() == before
 
@@ -272,7 +278,7 @@ def test_atomic_failure_and_post_replace_durability_semantics(
 
     monkeypatch.setattr(persistence, "_fsync_directory", fail_directory_sync)
     with pytest.raises(TaskStoreDurabilityError):
-        store.attach_card_if_missing(record.mirror_id, 99)
+        store.attach_card_if_missing(record.mirror_id, 99, claimed.card_create_nonce)
     assert store.get(record.mirror_id).card_message_id == 99
 
 

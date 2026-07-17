@@ -1,78 +1,38 @@
-import base64
 import logging
-from collections.abc import AsyncIterator, Awaitable
-from contextlib import suppress
-from typing import Protocol, cast
 
 import discord
 
 from study_discord_agent.discord_task_persistence import TaskStoreDurabilityError
-from study_discord_agent.github_mirror_cards import github_mirror_view
+from study_discord_agent.github_mirror_cards import (
+    github_mirror_card_signature,
+    github_mirror_view,
+)
+from study_discord_agent.github_mirror_channel import (
+    GitHubMirrorChannelAccessError,
+    GitHubMirrorConfigurationError,
+    MirrorChannel,
+    MirrorChannelClient,
+    MirrorMessage,
+    find_bot_nonce_messages,
+    resolve_mirror_channel,
+)
 from study_discord_agent.github_mirror_model import GitHubMirrorEvent, GitHubMirrorRecord
 from study_discord_agent.github_mirror_store import GitHubMirrorStore
 
 logger = logging.getLogger(__name__)
 _RECONCILE_ATTEMPTS = 8
-_CREATE_SEARCH_LIMIT = 100
 
-
-class GitHubMirrorConfigurationError(RuntimeError):
-    pass
-
-
-class GitHubMirrorChannelAccessError(RuntimeError):
-    pass
-
-
-class GitHubMirrorDeliveryUnresolved(RuntimeError):
-    pass
-
-
-class _ChannelClient(Protocol):
-    def get_channel(self, channel_id: int, /) -> object | None: ...
-
-    def fetch_channel(self, channel_id: int, /) -> Awaitable[object]: ...
-
-
-class _MirrorMessage(Protocol):
-    id: int
-    nonce: str | int | None
-    author: object
-
-    def edit(self, **kwargs: object) -> Awaitable[object]: ...
-
-    def delete(self) -> Awaitable[None]: ...
-
-
-class _Guild(Protocol):
-    id: int
-    me: object | None
-
-
-class _Permissions(Protocol):
-    view_channel: bool
-    send_messages: bool
-    read_message_history: bool
-
-
-class _MirrorChannel(Protocol):
-    id: int
-    type: discord.ChannelType
-    guild: _Guild
-
-    def permissions_for(self, member: object) -> _Permissions: ...
-
-    def send(self, **kwargs: object) -> Awaitable[_MirrorMessage]: ...
-
-    def fetch_message(self, message_id: int) -> Awaitable[_MirrorMessage]: ...
-
-    def history(self, *, limit: int) -> AsyncIterator[_MirrorMessage]: ...
+__all__ = (
+    "GitHubMirrorChannelAccessError",
+    "GitHubMirrorConfigurationError",
+    "GitHubMirrorPublisher",
+)
 
 
 class GitHubMirrorPublisher:
     def __init__(
         self,
-        client: _ChannelClient,
+        client: MirrorChannelClient,
         store: GitHubMirrorStore,
         *,
         guild_id: int | None,
@@ -84,7 +44,11 @@ class GitHubMirrorPublisher:
         self._channel_id = channel_id
 
     async def publish(self, event: GitHubMirrorEvent) -> GitHubMirrorRecord:
-        channel = await self._resolve_channel()
+        channel = await resolve_mirror_channel(
+            self._client,
+            guild_id=self._guild_id,
+            channel_id=self._channel_id,
+        )
         assert self._guild_id is not None
         assert self._channel_id is not None
         upsert = self._store.upsert_event(
@@ -96,173 +60,201 @@ class GitHubMirrorPublisher:
         try:
             if record.card_message_id is None:
                 return await self._create_card(channel, record)
-            return await self._edit_card(channel, record)
+            return await self._finish_attached_card(channel, record)
         except Exception:
             logger.exception("GitHub mirror publication failed mirror_id=%s", record.mirror_id)
             raise
 
-    async def _resolve_channel(self) -> _MirrorChannel:
-        if self._guild_id is None or self._channel_id is None:
-            raise GitHubMirrorConfigurationError(
-                "DISCORD_GUILD_ID and DISCORD_PR_CHANNEL_ID are required for GitHub mirrors"
-            )
-        resolved = self._client.get_channel(self._channel_id)
-        if resolved is None:
-            try:
-                resolved = await self._client.fetch_channel(self._channel_id)
-            except discord.NotFound as error:
-                raise GitHubMirrorConfigurationError(
-                    "Configured Discord PR channel does not exist"
-                ) from error
-            except discord.Forbidden as error:
-                raise GitHubMirrorChannelAccessError(
-                    "Configured Discord PR channel is inaccessible"
-                ) from error
-        if not isinstance(resolved, discord.abc.Messageable):
-            raise GitHubMirrorConfigurationError("Configured Discord PR channel is not messageable")
-        channel = cast(_MirrorChannel, resolved)
-        if channel.type not in {discord.ChannelType.text, discord.ChannelType.news}:
-            raise GitHubMirrorConfigurationError(
-                "Configured Discord PR channel must be a guild text or announcement channel"
-            )
-        if channel.id != self._channel_id or channel.guild.id != self._guild_id:
-            raise GitHubMirrorConfigurationError(
-                "Configured Discord PR channel is outside the configured guild"
-            )
-        member = channel.guild.me
-        if member is None:
-            raise GitHubMirrorChannelAccessError("Discord bot guild membership is unavailable")
-        permissions = channel.permissions_for(member)
-        if not all(
-            (
-                permissions.view_channel,
-                permissions.send_messages,
-                permissions.read_message_history,
-            )
-        ):
-            raise GitHubMirrorChannelAccessError(
-                "Discord bot needs view, send, and message-history permissions"
-            )
-        return channel
-
     async def _create_card(
-        self, channel: _MirrorChannel, record: GitHubMirrorRecord
+        self, channel: MirrorChannel, record: GitHubMirrorRecord
     ) -> GitHubMirrorRecord:
         record, claimed = self._store.claim_card_creation(record.mirror_id)
         if record.card_message_id is not None:
-            return record
-        marker = _card_nonce(record.mirror_id)
+            return await self._finish_attached_card(channel, record)
+        nonce = record.card_create_nonce
+        if nonce is None:
+            raise RuntimeError("pending Discord mirror card creation has no nonce")
         if not claimed:
-            matches = await self._find_created_cards(channel, marker)
-            if not matches:
-                raise GitHubMirrorDeliveryUnresolved(
-                    "Discord mirror card creation is ambiguous; refusing to resend"
-                )
-            return await self._attach_created_cards(matches, record)
+            matches = await find_bot_nonce_messages(channel, nonce)
+            if matches:
+                return await self._attach_created_cards(channel, matches, record)
         try:
             message = await channel.send(
                 content=None,
                 view=github_mirror_view(record),
-                nonce=marker,
+                nonce=nonce,
+                enforce_nonce=True,
                 allowed_mentions=discord.AllowedMentions.none(),
             )
         except discord.Forbidden as error:
-            self._store.release_card_creation(record.mirror_id)
+            self._store.release_card_creation(record.mirror_id, nonce)
             raise GitHubMirrorChannelAccessError(
                 "Configured Discord PR channel is inaccessible"
             ) from error
         except discord.HTTPException:
-            matches = await self._find_created_cards(channel, marker)
+            matches = await find_bot_nonce_messages(channel, nonce)
             if matches:
-                return await self._attach_created_cards(matches, record)
+                return await self._attach_created_cards(channel, matches, record)
             raise
-        return await self._attach_created_cards((message,), record)
+        return await self._attach_created_cards(channel, (message,), record)
 
     async def _attach_created_cards(
         self,
-        messages: tuple[_MirrorMessage, ...],
+        channel: MirrorChannel,
+        messages: tuple[MirrorMessage, ...],
         record: GitHubMirrorRecord,
     ) -> GitHubMirrorRecord:
         message = min(messages, key=lambda candidate: candidate.id)
         if type(message.id) is not int or message.id <= 0:
             raise RuntimeError("Discord returned an invalid mirror card ID")
+        nonce = record.card_create_nonce
+        if nonce is None:
+            raise RuntimeError("pending Discord mirror card creation has no nonce")
         try:
-            retained, attached = self._store.attach_card_if_missing(record.mirror_id, message.id)
+            retained, attached = self._store.attach_card_if_missing(
+                record.mirror_id,
+                message.id,
+                nonce,
+            )
         except TaskStoreDurabilityError:
-            await self._reconcile_card(message, record)
+            await self._best_effort_reconcile_uncertain_attachment(channel, record, message)
             raise
         except Exception:
-            try:
-                await message.delete()
-            except Exception:
-                logger.exception(
-                    "failed to delete uncommitted GitHub mirror card mirror_id=%s",
-                    record.mirror_id,
-                )
-            else:
-                self._store.release_card_creation(record.mirror_id)
+            if await self._delete_uncommitted_cards(messages, record.mirror_id):
+                self._store.release_card_creation(record.mirror_id, nonce)
             raise
-        for candidate in messages:
-            if candidate.id != retained.card_message_id:
-                with suppress(discord.NotFound):
-                    await candidate.delete()
-        if not attached:
-            logger.info("deleted raced GitHub mirror card mirror_id=%s", record.mirror_id)
-            return retained
-        retained = await self._reconcile_card(message, record)
-        logger.info("published GitHub mirror card mirror_id=%s", record.mirror_id)
+        retained = await self._finish_attached_card(channel, retained, message=message)
+        action = "published" if attached else "reconciled raced"
+        logger.info("%s GitHub mirror card mirror_id=%s", action, record.mirror_id)
         return retained
 
-    async def _edit_card(
-        self, channel: _MirrorChannel, record: GitHubMirrorRecord
-    ) -> GitHubMirrorRecord:
-        assert record.card_message_id is not None
+    async def _delete_uncommitted_cards(
+        self, messages: tuple[MirrorMessage, ...], mirror_id: str
+    ) -> bool:
+        removed = True
+        for message in messages:
+            try:
+                await message.delete()
+            except discord.NotFound:
+                continue
+            except Exception:
+                removed = False
+                logger.exception(
+                    "failed to delete uncommitted GitHub mirror card mirror_id=%s",
+                    mirror_id,
+                )
+        return removed
+
+    async def _best_effort_reconcile_uncertain_attachment(
+        self,
+        channel: MirrorChannel,
+        rendered: GitHubMirrorRecord,
+        message: MirrorMessage,
+    ) -> None:
         try:
-            message = await channel.fetch_message(record.card_message_id)
-        except discord.NotFound:
-            return await self._replace_missing_card(channel, record)
-        except discord.Forbidden as error:
-            raise GitHubMirrorChannelAccessError(
-                "Configured Discord PR channel is inaccessible"
-            ) from error
+            canonical = self._store.get(rendered.mirror_id)
+            if canonical.card_message_id is not None:
+                await self._finish_attached_card(channel, canonical, message=message)
+        except Exception:
+            logger.exception(
+                "failed to reconcile durability-uncertain GitHub mirror card mirror_id=%s",
+                rendered.mirror_id,
+            )
+
+    async def _finish_attached_card(
+        self,
+        channel: MirrorChannel,
+        record: GitHubMirrorRecord,
+        *,
+        message: MirrorMessage | None = None,
+        redirects: int = 0,
+    ) -> GitHubMirrorRecord:
+        if redirects >= _RECONCILE_ATTEMPTS:
+            raise RuntimeError("GitHub mirror card identity did not reach a stable revision")
+        assert record.card_message_id is not None
+        if message is None or message.id != record.card_message_id:
+            try:
+                message = await channel.fetch_message(record.card_message_id)
+            except discord.NotFound:
+                return await self._replace_missing_card(channel, record)
+            except discord.Forbidden as error:
+                raise GitHubMirrorChannelAccessError(
+                    "Configured Discord PR channel is inaccessible"
+                ) from error
         try:
             await self._render_card(message, record)
             retained = await self._reconcile_card(message, record)
+            if retained.card_message_id != message.id:
+                return await self._finish_attached_card(
+                    channel,
+                    retained,
+                    redirects=redirects + 1,
+                )
+            retained = await self._cleanup_duplicates(channel, message, retained)
+            if retained.card_message_id != message.id:
+                return await self._finish_attached_card(
+                    channel,
+                    retained,
+                    redirects=redirects + 1,
+                )
+            return retained
         except discord.NotFound:
             return await self._replace_missing_card(channel, record)
-        logger.info("updated GitHub mirror card mirror_id=%s", record.mirror_id)
-        return retained
+
+    async def _cleanup_duplicates(
+        self,
+        channel: MirrorChannel,
+        message: MirrorMessage,
+        record: GitHubMirrorRecord,
+    ) -> GitHubMirrorRecord:
+        nonce = record.card_cleanup_nonce
+        if nonce is None:
+            return record
+        await self._delete_nonce_matches(channel, nonce, keep_message_id=message.id)
+        cleaned = self._store.complete_card_cleanup(record.mirror_id, nonce)
+        if github_mirror_card_signature(cleaned) == github_mirror_card_signature(record):
+            return cleaned
+        await self._render_card(message, cleaned)
+        return await self._reconcile_card(message, cleaned)
+
+    async def _delete_nonce_matches(
+        self,
+        channel: MirrorChannel,
+        nonce: str,
+        *,
+        keep_message_id: int | None,
+    ) -> None:
+        matches = await find_bot_nonce_messages(channel, nonce)
+        for candidate in matches:
+            if candidate.id == keep_message_id:
+                continue
+            try:
+                await candidate.delete()
+            except discord.NotFound:
+                continue
 
     async def _replace_missing_card(
-        self, channel: _MirrorChannel, record: GitHubMirrorRecord
+        self, channel: MirrorChannel, record: GitHubMirrorRecord
     ) -> GitHubMirrorRecord:
         assert record.card_message_id is not None
-        cleared = self._store.clear_card_if_matches(record.mirror_id, record.card_message_id)
+        missing_message_id = record.card_message_id
+        if record.card_cleanup_nonce is not None:
+            await self._delete_nonce_matches(
+                channel,
+                record.card_cleanup_nonce,
+                keep_message_id=None,
+            )
+            record = self._store.complete_card_cleanup(
+                record.mirror_id,
+                record.card_cleanup_nonce,
+            )
+        cleared = self._store.clear_card_if_matches(record.mirror_id, missing_message_id)
         if cleared.card_message_id is None:
             return await self._create_card(channel, cleared)
-        return cleared
-
-    async def _find_created_cards(
-        self, channel: _MirrorChannel, marker: str
-    ) -> tuple[_MirrorMessage, ...]:
-        member = channel.guild.me
-        member_id = getattr(member, "id", None)
-        if type(member_id) is not int or member_id <= 0:
-            raise GitHubMirrorChannelAccessError("Discord bot guild membership is unavailable")
-        matches: list[_MirrorMessage] = []
-        try:
-            async for message in channel.history(limit=_CREATE_SEARCH_LIMIT):
-                author_id = getattr(message.author, "id", None)
-                if author_id == member_id and message.nonce == marker:
-                    matches.append(message)
-        except discord.Forbidden as error:
-            raise GitHubMirrorChannelAccessError(
-                "Configured Discord PR channel is inaccessible"
-            ) from error
-        return tuple(matches)
+        return await self._finish_attached_card(channel, cleared)
 
     async def _reconcile_card(
-        self, message: _MirrorMessage, rendered: GitHubMirrorRecord
+        self, message: MirrorMessage, rendered: GitHubMirrorRecord
     ) -> GitHubMirrorRecord:
         rendered_revision = rendered.revision
         for _ in range(_RECONCILE_ATTEMPTS):
@@ -279,9 +271,7 @@ class GitHubMirrorPublisher:
                 return latest
         raise RuntimeError("GitHub mirror card did not reach a stable revision")
 
-    async def _render_card(
-        self, message: _MirrorMessage, record: GitHubMirrorRecord
-    ) -> None:
+    async def _render_card(self, message: MirrorMessage, record: GitHubMirrorRecord) -> None:
         try:
             await message.edit(
                 content=None,
@@ -294,8 +284,3 @@ class GitHubMirrorPublisher:
             raise GitHubMirrorChannelAccessError(
                 "Configured Discord PR channel is inaccessible"
             ) from error
-
-
-def _card_nonce(mirror_id: str) -> str:
-    encoded = base64.urlsafe_b64encode(bytes.fromhex(mirror_id)).decode("ascii").rstrip("=")
-    return f"gm:{encoded}"

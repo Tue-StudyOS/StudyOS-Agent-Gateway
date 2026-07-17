@@ -17,6 +17,7 @@ _LOGIN = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})")
 _SHA = re.compile(r"[0-9a-f]{40}")
 _OPAQUE_ID = re.compile(r"[0-9a-f]{32}")
 _DELIVERY_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
+_CARD_NONCE = re.compile(r"gm:[A-Za-z0-9_-]{22}")
 GITHUB_EVENT_ACTIONS = {
     "pull_request": frozenset(
         {
@@ -133,6 +134,8 @@ class GitHubMirrorRecord:
     channel_id: int
     card_message_id: int | None
     card_create_pending: bool
+    card_create_nonce: str | None
+    card_cleanup_nonce: str | None
     thread_id: int | None
     repository_full_name: str
     item_kind: GitHubItemKind
@@ -167,8 +170,14 @@ class GitHubMirrorRecord:
         _optional_positive_integer(self.card_message_id, "card_message_id")
         if type(self.card_create_pending) is not bool:
             raise ValueError("card_create_pending must be a boolean")
+        _optional_card_nonce(self.card_create_nonce, "card_create_nonce")
+        _optional_card_nonce(self.card_cleanup_nonce, "card_cleanup_nonce")
+        if self.card_create_pending != (self.card_create_nonce is not None):
+            raise ValueError("pending card creation must have exactly one persisted nonce")
         if self.card_message_id is not None and self.card_create_pending:
             raise ValueError("an attached card cannot have pending creation")
+        if self.card_message_id is None and self.card_cleanup_nonce is not None:
+            raise ValueError("card cleanup requires an attached card")
         _optional_positive_integer(self.thread_id, "thread_id")
         _item_identity(self.repository_full_name, self.item_kind, self.item_number, self.item_url)
         _bounded_text(self.title, "title", MAX_TITLE_LENGTH)
@@ -258,6 +267,11 @@ def _exact_enum(value: object, expected: type[StrEnum], name: str) -> None:
 def _optional_positive_integer(value: int | None, name: str) -> None:
     if value is not None:
         _positive_integer(value, name)
+
+
+def _optional_card_nonce(value: str | None, name: str) -> None:
+    if value is not None and not _CARD_NONCE.fullmatch(value):
+        raise ValueError(f"{name} must be a bounded card-generation nonce")
 
 
 def _bounded_text(value: str, name: str, maximum: int) -> None:

@@ -139,10 +139,16 @@ def test_two_store_instances_enforce_single_card_winner_and_cas(tmp_path: Path) 
     path = tmp_path / "github-mirrors.json"
     first = _store(path)
     created = first.upsert_event(_event("first"), guild_id=10, channel_id=20).record
+    claimed, claim_won = first.claim_card_creation(created.mirror_id)
+    assert claim_won and claimed.card_create_nonce is not None
     second = _store(path)
 
-    winner, attached = first.attach_card_if_missing(created.mirror_id, 101)
-    retained, raced = second.attach_card_if_missing(created.mirror_id, 202)
+    winner, attached = first.attach_card_if_missing(
+        created.mirror_id, 101, claimed.card_create_nonce
+    )
+    retained, raced = second.attach_card_if_missing(
+        created.mirror_id, 202, claimed.card_create_nonce
+    )
 
     assert attached
     assert not raced
@@ -228,7 +234,7 @@ def test_compare_and_set_callback_rejects_nested_mutation_without_overwrite(
     record = store.upsert_event(_event("first"), guild_id=10, channel_id=20).record
 
     def nested_mutation(current: GitHubMirrorRecord) -> GitHubMirrorRecord:
-        store.attach_card_if_missing(current.mirror_id, 99)
+        store.attach_card_if_missing(current.mirror_id, 99, "gm:" + "a" * 22)
         return current
 
     outcome = _run_bounded(
@@ -250,16 +256,19 @@ def test_compare_and_set_detects_nested_other_store_mutation_without_overwrite(
     path = tmp_path / "nested-other-store.json"
     first = _store(path)
     record = first.upsert_event(_event("first"), guild_id=10, channel_id=20).record
+    claimed, claim_won = first.claim_card_creation(record.mirror_id)
+    assert claim_won and claimed.card_create_nonce is not None
+    creation_nonce = claimed.card_create_nonce
     second = _store(path)
 
     def nested_mutation(current: GitHubMirrorRecord) -> GitHubMirrorRecord:
-        second.attach_card_if_missing(current.mirror_id, 99)
+        second.attach_card_if_missing(current.mirror_id, 99, creation_nonce)
         return replace(current, thread_id=303)
 
     outcome = _run_bounded(
         lambda: first.compare_and_set(
-            record.mirror_id,
-            record.revision,
+            claimed.mirror_id,
+            claimed.revision,
             nested_mutation,
         )
     )
@@ -268,4 +277,4 @@ def test_compare_and_set_detects_nested_other_store_mutation_without_overwrite(
     canonical = first.get(record.mirror_id)
     assert canonical.card_message_id == 99
     assert canonical.thread_id is None
-    assert canonical.revision == record.revision + 1
+    assert canonical.revision == claimed.revision + 1

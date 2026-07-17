@@ -36,6 +36,24 @@ def github_mirror_view(record: GitHubMirrorRecord) -> discord.ui.LayoutView:
     return view
 
 
+def github_mirror_card_signature(record: GitHubMirrorRecord) -> tuple[object, ...]:
+    """Fields that can change the rendered Discord card."""
+    return (
+        record.mirror_id,
+        record.repository_full_name,
+        record.item_kind,
+        record.item_number,
+        record.item_url,
+        record.title,
+        record.state,
+        record.author_login,
+        record.labels,
+        record.base_ref,
+        record.head_ref,
+        record.activity,
+    )
+
+
 def _heading(record: GitHubMirrorRecord) -> str:
     kind = "Pull request" if record.item_kind is GitHubItemKind.PULL_REQUEST else "Issue"
     return f"### {kind} #{record.item_number}: {_escape(record.title)}"

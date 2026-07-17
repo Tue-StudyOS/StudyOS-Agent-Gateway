@@ -1,4 +1,5 @@
 import asyncio
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -54,8 +55,17 @@ def _has_controls(view: discord.ui.LayoutView) -> bool:
 
 
 class CoordinatedMessage:
-    def __init__(self, message_id: int, view: discord.ui.LayoutView) -> None:
+    def __init__(
+        self,
+        message_id: int,
+        view: discord.ui.LayoutView,
+        *,
+        nonce: str,
+        author: object,
+    ) -> None:
         self.id = message_id
+        self.nonce = nonce
+        self.author = author
         self.current_view = view
         self.edits: list[discord.ui.LayoutView] = []
         self.open_edit_started = asyncio.Event()
@@ -77,8 +87,17 @@ class CoordinatedMessage:
 
 
 class FakeMessage:
-    def __init__(self, message_id: int, view: discord.ui.LayoutView) -> None:
+    def __init__(
+        self,
+        message_id: int,
+        view: discord.ui.LayoutView,
+        *,
+        nonce: str,
+        author: object,
+    ) -> None:
         self.id = message_id
+        self.nonce = nonce
+        self.author = author
         self.current_view = view
 
     async def edit(self, **kwargs: object) -> "FakeMessage":
@@ -93,7 +112,7 @@ class FakeChannel(discord.abc.Messageable):
     def __init__(self) -> None:
         self.id = 20
         self.type = discord.ChannelType.text
-        self.guild = SimpleNamespace(id=10, me=object())
+        self.guild = SimpleNamespace(id=10, me=SimpleNamespace(id=99))
         self.messages: dict[int, FakeMessage | CoordinatedMessage] = {}
         self.sent: list[FakeMessage] = []
 
@@ -109,13 +128,25 @@ class FakeChannel(discord.abc.Messageable):
 
     async def send(self, **kwargs: object) -> FakeMessage:  # pyright: ignore[reportIncompatibleMethodOverride]
         view = cast(discord.ui.LayoutView, kwargs["view"])
-        message = FakeMessage(100 + len(self.sent), view)
+        message = FakeMessage(
+            100 + len(self.sent),
+            view,
+            nonce=cast(str, kwargs["nonce"]),
+            author=self.guild.me,
+        )
         self.messages[message.id] = message
         self.sent.append(message)
         return message
 
     async def fetch_message(self, message_id: int) -> discord.Message:
         return cast(discord.Message, self.messages[message_id])
+
+    async def history(  # pyright: ignore[reportIncompatibleMethodOverride]
+        self, *, limit: int
+    ) -> AsyncIterator[FakeMessage | CoordinatedMessage]:
+        for message in tuple(reversed(self.sent[-limit:])):
+            if message.id in self.messages:
+                yield message
 
 
 class FakeClient:
@@ -149,7 +180,12 @@ async def test_older_publisher_rerenders_latest_canonical_revision(tmp_path: Pat
     created = await older_publisher.publish(_event("initial"))
     assert created.card_message_id is not None
     initial_message = channel.messages[created.card_message_id]
-    coordinated = CoordinatedMessage(created.card_message_id, initial_message.current_view)
+    coordinated = CoordinatedMessage(
+        created.card_message_id,
+        initial_message.current_view,
+        nonce=initial_message.nonce,
+        author=initial_message.author,
+    )
     channel.messages[created.card_message_id] = coordinated
 
     older_task = asyncio.create_task(

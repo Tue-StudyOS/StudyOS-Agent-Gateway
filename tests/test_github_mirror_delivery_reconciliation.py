@@ -100,9 +100,16 @@ class _Channel(discord.abc.Messageable):
 
     async def send(self, **kwargs: object) -> _Message:  # pyright: ignore[reportIncompatibleMethodOverride]
         self.send_calls += 1
+        nonce = cast(str | int | None, kwargs.get("nonce"))
+        existing = next(
+            (message for message in self.messages.values() if message.nonce == nonce),
+            None,
+        )
+        if existing is not None:
+            return existing
         message = _Message(
             100 + self.send_calls,
-            nonce=cast(str | int | None, kwargs.get("nonce")),
+            nonce=nonce,
             channel=self,
         )
         self.messages[message.id] = message
@@ -178,7 +185,7 @@ async def test_ambiguous_create_adopts_bounded_nonce_match(tmp_path: Path) -> No
 
 
 @pytest.mark.asyncio
-async def test_unresolved_ambiguous_create_is_not_resent(tmp_path: Path) -> None:
+async def test_unresolved_ambiguous_create_is_idempotently_resent(tmp_path: Path) -> None:
     channel = _Channel(ambiguous_send=True, expose_history=False)
     publisher, _ = _publisher(tmp_path, channel)
 
@@ -190,10 +197,10 @@ async def test_unresolved_ambiguous_create_is_not_resent(tmp_path: Path) -> None
         guild_id=10,
         channel_id=20,
     )
-    with pytest.raises(RuntimeError, match="ambiguous"):
-        await restarted.publish(_event("later", action="edited"))
+    recovered = await restarted.publish(_event("later", action="edited"))
 
-    assert channel.send_calls == 1
+    assert channel.send_calls == 2
+    assert recovered.card_message_id == 101
 
 
 def test_equal_timestamp_ready_state_cannot_regress_to_draft(tmp_path: Path) -> None:

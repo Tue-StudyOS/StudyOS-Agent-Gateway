@@ -23,6 +23,8 @@ def record_from_event(
         channel_id=channel_id,
         card_message_id=None,
         card_create_pending=False,
+        card_create_nonce=None,
+        card_cleanup_nonce=None,
         thread_id=None,
         repository_full_name=event.repository_full_name,
         item_kind=event.item_kind,
@@ -90,6 +92,83 @@ def updated_record(
         revision=current.revision + 1,
         handled_interaction_claims=candidate.handled_interaction_claims[-MAX_HANDLED_CLAIMS:],
         updated_at=timestamp,
+    )
+
+
+def claim_card_record(
+    current: GitHubMirrorRecord, creation_nonce: str, timestamp: str
+) -> GitHubMirrorRecord:
+    return updated_record(
+        current,
+        lambda record: replace(
+            record,
+            card_create_pending=True,
+            card_create_nonce=creation_nonce,
+        ),
+        timestamp,
+    )
+
+
+def attach_card_record(
+    current: GitHubMirrorRecord,
+    message_id: int,
+    creation_nonce: str,
+    timestamp: str,
+) -> GitHubMirrorRecord:
+    return updated_record(
+        current,
+        lambda record: replace(
+            record,
+            card_message_id=message_id,
+            card_create_pending=False,
+            card_create_nonce=None,
+            card_cleanup_nonce=creation_nonce,
+        ),
+        timestamp,
+    )
+
+
+def queue_card_cleanup_record(
+    current: GitHubMirrorRecord, creation_nonce: str, timestamp: str
+) -> GitHubMirrorRecord:
+    return updated_record(
+        current,
+        lambda record: replace(record, card_cleanup_nonce=creation_nonce),
+        timestamp,
+    )
+
+
+def release_card_creation_record(current: GitHubMirrorRecord, timestamp: str) -> GitHubMirrorRecord:
+    return updated_record(
+        current,
+        lambda record: replace(
+            record,
+            card_create_pending=False,
+            card_create_nonce=None,
+        ),
+        timestamp,
+    )
+
+
+def complete_card_cleanup_record(current: GitHubMirrorRecord, timestamp: str) -> GitHubMirrorRecord:
+    return updated_record(
+        current,
+        lambda record: replace(record, card_cleanup_nonce=None),
+        timestamp,
+    )
+
+
+def clear_card_record(current: GitHubMirrorRecord, timestamp: str) -> GitHubMirrorRecord:
+    return updated_record(
+        current,
+        lambda record: replace(
+            record,
+            card_message_id=None,
+            card_create_pending=False,
+            card_create_nonce=None,
+            card_cleanup_nonce=None,
+        ),
+        timestamp,
     )
 
 
