@@ -11,3 +11,4 @@ dist/
 .learnings/
 .journal/
 .secrets/
+.worktrees/
