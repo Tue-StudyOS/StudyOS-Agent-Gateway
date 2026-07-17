@@ -110,35 +110,35 @@ class CodexAppServerConnection:
             await old_client.close()
 
         client = self._factory()
+        unsubscribe: Callable[[], None] | None = None
         try:
             await client.start()
             unsubscribe = client.subscribe(
                 lambda notification: self._deliver_notification(generation, notification)
             )
+            async with self._lifecycle_lock:
+                if self._closed or generation != self._generation or self._stale:
+                    error = (
+                        AppServerClosedError("Codex app-server connection is closed")
+                        if self._closed
+                        else self._failure
+                    )
+                else:
+                    self._client = client
+                    self._unsubscribe = unsubscribe
+                    return client
+            if error is not None:
+                raise error
+            raise asyncio.CancelledError()
         except BaseException as error:
+            if unsubscribe:
+                unsubscribe()
             await client.close()
             async with self._lifecycle_lock:
                 if generation == self._generation:
                     self._stale = True
                     self._failure = error
             raise
-
-        async with self._lifecycle_lock:
-            if self._closed or generation != self._generation or self._stale:
-                unsubscribe()
-                error = (
-                    AppServerClosedError("Codex app-server connection is closed")
-                    if self._closed
-                    else self._failure
-                )
-            else:
-                self._client = client
-                self._unsubscribe = unsubscribe
-                return client
-        await client.close()
-        if error is not None:
-            raise error
-        raise asyncio.CancelledError()
 
     async def _deliver_notification(
         self,

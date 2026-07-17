@@ -1,7 +1,7 @@
 import asyncio
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -11,6 +11,7 @@ from study_discord_agent.agent_errors import (
     AgentTurnTimedOut,
 )
 from study_discord_agent.codex_app_server import CodexAppServerClient
+from study_discord_agent.codex_app_server_connection import CodexAppServerConnection
 from study_discord_agent.codex_app_server_protocol import (
     AppServerNotification,
     AppServerProcessError,
@@ -55,8 +56,20 @@ class FakeAppServerClient:
         self.block_steer = False
         self.block_interrupt = False
         self.block_close = False
+        self.block_thread_start = False
+        self.block_client_start = False
+        self.thread_start_entered = asyncio.Event()
+        self.client_start_entered = asyncio.Event()
+        self.subscribed = asyncio.Event()
+        self.release_thread_start = asyncio.Event()
+        self.release_client_start = asyncio.Event()
+        self.unsubscribe_calls = 0
+        self.cancel_recovery_on_subscribe: Callable[[], None] | None = None
 
     async def start(self) -> object:
+        self.client_start_entered.set()
+        if self.block_client_start:
+            await self.release_client_start.wait()
         if self.start_error:
             raise self.start_error
         self.started += 1
@@ -64,10 +77,21 @@ class FakeAppServerClient:
 
     def subscribe(self, handler: NotificationHandler) -> Callable[[], None]:
         self.handlers.append(handler)
-        return lambda: self.handlers.remove(handler)
+        self.subscribed.set()
+        if self.cancel_recovery_on_subscribe:
+            self.cancel_recovery_on_subscribe()
+
+        def unsubscribe() -> None:
+            self.unsubscribe_calls += 1
+            self.handlers.remove(handler)
+
+        return unsubscribe
 
     async def start_thread(self, *, cwd: str | Path | None = None, **_: object) -> ThreadRef:
         self.started_threads.append(cwd)
+        self.thread_start_entered.set()
+        if self.block_thread_start:
+            await self.release_thread_start.wait()
         return ThreadRef(f"thread-{len(self.started_threads)}")
 
     async def resume_thread(self, thread_id: str, **_: object) -> ThreadRef:
@@ -283,6 +307,23 @@ async def test_followup_steers_the_same_active_turn(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_steer_preserves_non_protocol_rpc_error(tmp_path: Path) -> None:
+    client = FakeAppServerClient()
+    rpc_error = AppServerRpcError(401, "Unauthorized")
+    client.steer_error = rpc_error
+    runtime = _runtime(tmp_path, client)
+    task = asyncio.create_task(runtime.run(channel_id=123, prompt="first", cwd=tmp_path))
+    await _wait_active(client)
+
+    with pytest.raises(AppServerRpcError) as exc_info:
+        await runtime.steer(channel_id=123, prompt="later")
+
+    assert exc_info.value is rpc_error
+    await _complete(client, "thread-1", "done")
+    assert (await task).message == "done"
+
+
+@pytest.mark.asyncio
 async def test_interrupt_uses_active_turn_and_resolves_run(tmp_path: Path) -> None:
     client = FakeAppServerClient()
     runtime = _runtime(tmp_path, client)
@@ -474,6 +515,50 @@ async def test_close_is_terminal_during_and_after_old_client_shutdown(tmp_path: 
     with pytest.raises(AgentRuntimeDisconnected):
         await runtime.start()
     assert factory.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_close_during_thread_load_never_starts_turn(tmp_path: Path) -> None:
+    client = FakeAppServerClient()
+    client.block_thread_start = True
+    runtime = _runtime(tmp_path, client)
+    run = asyncio.create_task(runtime.run(channel_id=1, prompt="new", cwd=tmp_path))
+    await client.thread_start_entered.wait()
+
+    await runtime.close()
+    client.release_thread_start.set()
+
+    with pytest.raises(AgentRuntimeDisconnected):
+        await run
+    assert client.started_turns == []
+
+
+@pytest.mark.asyncio
+async def test_cancelled_unpublished_recovery_retires_client_and_subscription() -> None:
+    client = FakeAppServerClient()
+    client.block_client_start = True
+
+    async def ignore_notification(_: int, __: AppServerNotification) -> None:
+        return None
+
+    connection = CodexAppServerConnection(
+        lambda: cast(CodexAppServerClient, client),
+        ignore_notification,
+    )
+    start = asyncio.create_task(connection.start())
+    await client.client_start_entered.wait()
+    lifecycle_lock = cast(Any, connection)._lifecycle_lock
+    await lifecycle_lock.acquire()
+    client.cancel_recovery_on_subscribe = cast(Any, connection)._recovery_task.cancel
+    client.release_client_start.set()
+    await client.subscribed.wait()
+    lifecycle_lock.release()
+
+    with pytest.raises(asyncio.CancelledError):
+        await start
+
+    assert client.close_calls == 1
+    assert client.unsubscribe_calls == 1
 
 
 @pytest.mark.asyncio

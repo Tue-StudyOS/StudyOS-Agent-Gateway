@@ -107,6 +107,7 @@ class CodexAppServerRuntime:
                 approval_policy=self._approval_policy,
                 sandbox=self._sandbox,
             )
+            await self._ensure_current_generation(generation)
             async with self._lock:
                 self._starting_threads[channel_id] = thread_id
             turn = await client.start_turn(thread_id, prompt, local_images=local_images)
@@ -184,7 +185,7 @@ class CodexAppServerRuntime:
                 return SteerResult.NOT_STEERABLE
             if is_protocol_incompatibility(exc):
                 await raise_runtime_failure(self._connection, generation, exc)
-            raise RuntimeError(f"Codex steering failed: {exc}") from exc
+            raise
         except (AppServerClosedError, AppServerProcessError, AppServerProtocolError) as exc:
             await raise_runtime_failure(self._connection, generation, exc)
         return SteerResult.STEERED
@@ -244,7 +245,6 @@ class CodexAppServerRuntime:
     async def has_active_turn(self, channel_id: int) -> bool:
         async with self._lock:
             return channel_id in self._active
-
     def has_persisted_session(self, channel_id: int) -> bool:
         return self._session_store.get(channel_id) is not None
 
