@@ -1,16 +1,17 @@
 import asyncio
-from typing import Any, cast
+from typing import cast
 
 from fastapi import FastAPI, Header, HTTPException, Request
 
 from study_discord_agent.config import Settings
-from study_discord_agent.github_events import DiscordNotification, notification_from_github_event
+from study_discord_agent.github_events import event_from_github_webhook
+from study_discord_agent.github_mirror_model import GitHubMirrorEvent
 from study_discord_agent.security import verify_github_signature
 
 
 def create_app(
     settings: Settings,
-    queue: "asyncio.Queue[DiscordNotification]",
+    queue: "asyncio.Queue[GitHubMirrorEvent]",
 ) -> FastAPI:
     app = FastAPI(title="StudyOS Agent Gateway")
 
@@ -22,10 +23,13 @@ def create_app(
     async def github_webhook(  # pyright: ignore[reportUnusedFunction]
         request: Request,
         x_github_event: str | None = Header(default=None),
+        x_github_delivery: str | None = Header(default=None),
         x_hub_signature_256: str | None = Header(default=None),
     ) -> dict[str, str]:
         if not x_github_event:
             raise HTTPException(status_code=400, detail="Missing X-GitHub-Event header")
+        if not x_github_delivery:
+            raise HTTPException(status_code=400, detail="Missing X-GitHub-Delivery header")
         if not settings.webhook_secret_value:
             raise HTTPException(status_code=503, detail="GitHub webhooks are not configured")
 
@@ -36,25 +40,37 @@ def create_app(
             x_hub_signature_256,
         ):
             raise HTTPException(status_code=401, detail="Invalid GitHub signature")
+        if settings.discord_guild_id is None or settings.discord_pr_channel_id is None:
+            raise HTTPException(
+                status_code=503, detail="GitHub mirror destination is not configured"
+            )
 
-        payload = cast(object, await request.json())
+        try:
+            payload = cast(object, await request.json())
+        except (TypeError, ValueError) as error:
+            raise HTTPException(status_code=400, detail="Invalid GitHub webhook payload") from error
         if not isinstance(payload, dict):
-            raise HTTPException(status_code=400, detail="Webhook payload must be an object")
+            raise HTTPException(status_code=400, detail="Invalid GitHub webhook payload")
 
-        notification = _notification_from_payload(x_github_event, cast(dict[str, Any], payload))
-        if notification:
-            await queue.put(notification)
+        event = _event_from_payload(
+            x_github_event,
+            x_github_delivery,
+            cast(dict[str, object], payload),
+        )
+        if event:
+            await queue.put(event)
             return {"status": "queued"}
         return {"status": "ignored"}
 
     return app
 
 
-def _notification_from_payload(
+def _event_from_payload(
     event_name: str,
-    payload: dict[str, Any],
-) -> DiscordNotification | None:
+    delivery_id: str,
+    payload: dict[str, object],
+) -> GitHubMirrorEvent | None:
     try:
-        return notification_from_github_event(event_name, payload)
+        return event_from_github_webhook(event_name, delivery_id, payload)
     except (KeyError, TypeError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail="Invalid GitHub webhook payload") from exc

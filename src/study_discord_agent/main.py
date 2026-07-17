@@ -8,7 +8,11 @@ from study_discord_agent.config import load_settings
 from study_discord_agent.discord_bot import StudyBot
 from study_discord_agent.git_identity import ensure_studyos_git_identity
 from study_discord_agent.github_client import GitHubClient
-from study_discord_agent.github_events import DiscordNotification
+from study_discord_agent.github_mirror_model import GitHubMirrorEvent
+from study_discord_agent.github_mirror_store import (
+    GitHubMirrorStore,
+    default_github_mirror_store_path,
+)
 from study_discord_agent.memory import ensure_global_agents, ensure_studyos_memory
 from study_discord_agent.triage import run_github_triage_loop
 from study_discord_agent.web import create_app
@@ -21,7 +25,7 @@ async def run() -> None:
     ensure_studyos_memory(settings.codex_home)
     ensure_studyos_git_identity()
 
-    queue: asyncio.Queue[DiscordNotification] = asyncio.Queue()
+    queue: asyncio.Queue[GitHubMirrorEvent] = asyncio.Queue()
     github = GitHubClient(settings.github_token_value)
     agent = AgentGateway(
         webhook_url=settings.agent_webhook_url,
@@ -33,7 +37,8 @@ async def run() -> None:
         codex_home=settings.codex_home,
         discord_worktree_root=settings.agent_discord_worktree_root,
     )
-    bot = StudyBot(settings, github, agent, queue)
+    mirror_store = GitHubMirrorStore(default_github_mirror_store_path(settings.codex_home))
+    bot = StudyBot(settings, github, agent, queue, mirror_store)
     app = create_app(settings, queue)
 
     server = uvicorn.Server(

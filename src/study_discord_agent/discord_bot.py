@@ -19,7 +19,9 @@ from study_discord_agent.discord_task_component_controller import (
     DiscordTaskInteractionController,
 )
 from study_discord_agent.github_client import GitHubClient
-from study_discord_agent.github_events import DiscordNotification
+from study_discord_agent.github_mirror_model import GitHubMirrorEvent
+from study_discord_agent.github_mirror_publisher import GitHubMirrorPublisher
+from study_discord_agent.github_mirror_store import GitHubMirrorStore
 from study_discord_agent.proactive import ProactiveMonitor
 
 logger = logging.getLogger(__name__)
@@ -33,7 +35,8 @@ class StudyBot(commands.Bot):
         settings: Settings,
         github: GitHubClient,
         agent: AgentGateway,
-        queue: "asyncio.Queue[DiscordNotification]",
+        queue: "asyncio.Queue[GitHubMirrorEvent]",
+        mirror_store: GitHubMirrorStore,
     ) -> None:
         intents = discord.Intents.default()
         intents.message_content = settings.discord_message_agent_enabled
@@ -49,6 +52,12 @@ class StudyBot(commands.Bot):
         )
         self.discord_tasks.register(self)
         self._mentions = self.discord_tasks.mentions
+        self.github_mirror_publisher = GitHubMirrorPublisher(
+            self,
+            mirror_store,
+            guild_id=settings.discord_guild_id,
+            channel_id=settings.discord_pr_channel_id,
+        )
 
     async def setup_hook(self) -> None:
         if self.settings.discord_guild_id:
@@ -81,49 +90,13 @@ class StudyBot(commands.Bot):
             notification = await self.queue.get()
             try:
                 await self.publish_notification(notification)
+            except Exception:
+                logger.exception("GitHub mirror publication failed")
             finally:
                 self.queue.task_done()
 
-    async def publish_notification(self, notification: DiscordNotification) -> None:
-        channel_id = self.settings.discord_pr_channel_id
-        channel: discord.abc.Messageable | None = None
-        if channel_id is not None:
-            resolved_channel = self.get_channel(channel_id)
-            if resolved_channel is None:
-                resolved_channel = await self.fetch_channel(channel_id)
-            if not isinstance(resolved_channel, discord.abc.Messageable):
-                raise RuntimeError("Configured Discord PR channel is not messageable")
-            channel = resolved_channel
-
-            embed = discord.Embed(
-                title=notification.title,
-                url=notification.url,
-                description=notification.description,
-                color=notification.color,
-            )
-            await channel.send(embed=embed)
-            if notification.followup_message:
-                await channel.send(
-                    _discord_text(notification.followup_message),
-                )
-        if self.settings.agent_auto_review_enabled and notification.agent_prompt:
-            try:
-                reply = await self.agent.ask(
-                    prompt=notification.agent_prompt,
-                    user="github-webhook",
-                    channel_id=channel_id,
-                )
-                if channel is not None:
-                    await channel.send(_discord_text(reply.message))
-            except RuntimeError as exc:
-                if channel is not None:
-                    await channel.send(f"Agent review failed: {exc}")
-                else:
-                    logger.warning("GitHub webhook agent run failed: %s", exc)
-        elif channel is None:
-            logger.info(
-                "GitHub webhook notification ignored because no Discord channel is configured"
-            )
+    async def publish_notification(self, notification: GitHubMirrorEvent) -> None:
+        await self.github_mirror_publisher.publish(notification)
 
     async def publish_agent_message(self, message: str) -> None:
         if self.settings.discord_pr_channel_id is None:
