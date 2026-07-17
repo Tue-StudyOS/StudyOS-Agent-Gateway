@@ -1,14 +1,102 @@
 import asyncio
+import sys
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
-from study_discord_agent.agent import AgentGateway
+from study_discord_agent.agent import AgentExecutionContext, AgentGateway
+from study_discord_agent.codex_app_server_turn import AppServerTurnResult
+from study_discord_agent.codex_command import AgentUsage
 from study_discord_agent.usage_store import ChannelUsageStore, default_usage_store_path
 
 
+@dataclass(frozen=True)
+class _RuntimeCall:
+    channel_id: int
+    cwd: str | Path | None
+
+
+class _FakePersistentRuntime:
+    def __init__(self) -> None:
+        self.calls: list[_RuntimeCall] = []
+
+    async def run(
+        self,
+        *,
+        channel_id: int,
+        prompt: str,
+        cwd: str | Path | None,
+        local_images: tuple[Path, ...] = (),
+        on_progress: object = None,
+    ) -> AppServerTurnResult:
+        del prompt, local_images, on_progress
+        self.calls.append(_RuntimeCall(channel_id=channel_id, cwd=cwd))
+        return AppServerTurnResult(
+            message="done",
+            thread_id="thread-1",
+            usage=AgentUsage(input_tokens=2, output_tokens=1),
+        )
+
+
 @pytest.mark.asyncio
-async def test_codex_channel_session_uses_discord_worktree_root(tmp_path: Path) -> None:
+async def test_source_less_discord_execution_uses_app_server_and_worktree(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "discord-worktrees"
+    usage_path = tmp_path / "usage.json"
+    agent = AgentGateway(
+        webhook_url=None,
+        command="codex exec --json -",
+        workdir=None,
+        timeout_seconds=10,
+        discord_worktree_root=str(root),
+        studyos_org_root=str(tmp_path / "Tue-StudyOS"),
+        usage_store_path=str(usage_path),
+    )
+    fake_runtime = _FakePersistentRuntime()
+    monkeypatch.setattr(agent, "_codex_runtime", cast(Any, fake_runtime))
+
+    reply = await agent.ask(
+        "continue",
+        user="student",
+        channel_id=123,
+        source_message_id=None,
+        execution=AgentExecutionContext(channel_id=123, trigger_event_id=9001),
+    )
+
+    assert reply.session_id == "thread-1"
+    assert fake_runtime.calls[0].channel_id == 123
+    assert Path(cast(str, fake_runtime.calls[0].cwd)).name == "123"
+    assert ChannelUsageStore(usage_path).rows()[0].channel_id == 123
+
+
+@pytest.mark.asyncio
+async def test_webhook_channel_metadata_without_execution_remains_one_shot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del tmp_path
+    command = f"{sys.executable} -c \"print('done')\""
+    agent = AgentGateway(
+        webhook_url=None,
+        command=command,
+        workdir=None,
+        timeout_seconds=10,
+    )
+    fake_runtime = _FakePersistentRuntime()
+    monkeypatch.setattr(agent, "_codex_runtime", cast(Any, fake_runtime))
+
+    reply = await agent.ask("review", user="github", channel_id=123)
+
+    assert reply.message == "done"
+    assert fake_runtime.calls == []
+
+
+@pytest.mark.asyncio
+async def test_webhook_metadata_does_not_prepare_discord_worktree(tmp_path: Path) -> None:
     fake_codex = tmp_path / "codex"
     fake_codex.write_text(
         "\n".join(
@@ -38,8 +126,8 @@ async def test_codex_channel_session_uses_discord_worktree_root(tmp_path: Path) 
 
     reply = await agent.ask("hello", user="student", channel_id=123, source_message_id=1)
 
-    assert f"--cd {root / '123'}" in reply.message
-    assert (root / "123").is_dir()
+    assert "--cd /workspace" in reply.message
+    assert not (root / "123").exists()
 
 
 @pytest.mark.asyncio
@@ -86,7 +174,7 @@ async def test_codex_channel_sessions_run_different_channels_in_parallel(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_codex_usage_is_recorded_by_channel(tmp_path: Path) -> None:
+async def test_webhook_metadata_does_not_record_channel_usage(tmp_path: Path) -> None:
     fake_codex = tmp_path / "codex"
     fake_codex.write_text(
         "\n".join(
@@ -120,18 +208,11 @@ async def test_codex_usage_is_recorded_by_channel(tmp_path: Path) -> None:
 
     rows = ChannelUsageStore(usage_path).rows()
     assert reply.message == "done"
-    assert len(rows) == 1
-    assert rows[0].channel_id == 123
-    assert rows[0].turns == 1
-    assert rows[0].input_tokens == 100
-    assert rows[0].cached_input_tokens == 25
-    assert rows[0].output_tokens == 7
-    assert rows[0].reasoning_output_tokens == 2
-    assert rows[0].last_session_id == "session-123"
+    assert rows == ()
 
 
 @pytest.mark.asyncio
-async def test_positional_codex_home_controls_default_usage_store(tmp_path: Path) -> None:
+async def test_webhook_metadata_does_not_create_default_usage_store(tmp_path: Path) -> None:
     fake_codex = tmp_path / "codex"
     fake_codex.write_text(
         "\n".join(
@@ -163,6 +244,4 @@ async def test_positional_codex_home_controls_default_usage_store(tmp_path: Path
     await agent.ask("hello", user="student", channel_id=456, source_message_id=1)
 
     rows = ChannelUsageStore(default_usage_store_path(str(codex_home))).rows()
-    assert len(rows) == 1
-    assert rows[0].channel_id == 456
-    assert rows[0].total_tokens == 15
+    assert rows == ()

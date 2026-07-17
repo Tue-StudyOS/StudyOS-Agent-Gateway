@@ -251,7 +251,7 @@ async def _deliver_reply(
     roots = tuple(Path(root) for root in settings.discord_artifact_allowed_root_list)
     if not roots:
         raise RuntimeError("DISCORD_ARTIFACT_ALLOWED_ROOTS must contain at least one path")
-    prepared = prepare_discord_reply(reply.message, reply.files, roots[0], message.id)
+    prepared = prepare_discord_reply(reply.message, reply.files, roots[0], str(message.id))
     if not prepared.files:
         await message.reply(_discord_text(prepared.message))
         return

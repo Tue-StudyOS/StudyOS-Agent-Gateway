@@ -6,6 +6,11 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
+from study_discord_agent.agent_errors import (
+    AgentInvalidOutput,
+    AgentProcessFailed,
+    AgentTurnTimedOut,
+)
 from study_discord_agent.codex_command import (
     AgentCommandResult,
     extract_agent_result,
@@ -36,17 +41,17 @@ async def run_agent_command(
             timeout=timeout_seconds,
         )
     except TimeoutError:
-        raise RuntimeError("Agent command timed out") from None
+        raise AgentTurnTimedOut("Agent command timed out") from None
 
     if process.returncode != 0:
         error = stderr.strip()
         logger.warning("agent command failed returncode=%s error=%s", process.returncode, error)
-        raise RuntimeError(f"Agent command failed: {error[:1000]}")
+        raise AgentProcessFailed("Agent command exited without a usable reply") from None
 
     output = stdout.strip()
     result = extract_agent_result(output)
     if not result.message:
-        raise RuntimeError("Agent command produced no output")
+        raise AgentInvalidOutput("Agent command produced no output")
     return result
 
 
