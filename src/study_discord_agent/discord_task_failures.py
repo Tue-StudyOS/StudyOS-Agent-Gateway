@@ -17,6 +17,8 @@ from study_discord_agent.discord_task_model import (
 
 _TIMEOUT_SUMMARY: Final = "The agent timed out. Partial work and the agent session were kept."
 _DISCONNECTED_SUMMARY: Final = "Codex app server disconnected. The session and worktree were kept."
+_NO_SESSION_SUMMARY: Final = "The agent session was not saved, so recovery is unavailable."
+_ACTIVE_TURN_SUMMARY: Final = "An agent turn may still be active, so recovery is unavailable yet."
 _INCOMPATIBLE_SUMMARY: Final = "The configured Codex app server is incompatible."
 _PROCESS_SUMMARY: Final = "The agent process exited before returning a result."
 _INVALID_OUTPUT_SUMMARY: Final = "The agent returned an invalid result."
@@ -82,11 +84,14 @@ def _resumable_failure(
     persisted_session: bool,
     active_turn: bool,
 ) -> DiscordTaskFailure:
-    retry_mode = (
-        DiscordTaskRetryMode.CONTINUE_SESSION
-        if persisted_session and not active_turn
-        else DiscordTaskRetryMode.NONE
-    )
+    if persisted_session and not active_turn:
+        retry_mode = DiscordTaskRetryMode.CONTINUE_SESSION
+    elif active_turn:
+        summary = _ACTIVE_TURN_SUMMARY
+        retry_mode = DiscordTaskRetryMode.NONE
+    else:
+        summary = _NO_SESSION_SUMMARY
+        retry_mode = DiscordTaskRetryMode.NONE
     return DiscordTaskFailure(category=category, summary=summary, retry_mode=retry_mode)
 
 

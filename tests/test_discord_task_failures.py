@@ -91,17 +91,34 @@ def test_classify_agent_failure_uses_safe_constant_metadata(
     (AgentTurnTimedOut("sensitive"), AgentRuntimeDisconnected("sensitive")),
 )
 @pytest.mark.parametrize(
-    ("persisted_session", "active_turn"),
-    ((False, False), (True, True), (False, True)),
+    ("persisted_session", "active_turn", "summary"),
+    [
+        (
+            False,
+            False,
+            "The agent session was not saved, so recovery is unavailable.",
+        ),
+        (
+            True,
+            True,
+            "An agent turn may still be active, so recovery is unavailable yet.",
+        ),
+        (
+            False,
+            True,
+            "An agent turn may still be active, so recovery is unavailable yet.",
+        ),
+    ],
 )
 def test_timeout_and_disconnect_continue_only_for_idle_persisted_sessions(
-    error: BaseException, persisted_session: bool, active_turn: bool
+    error: BaseException, persisted_session: bool, active_turn: bool, summary: str
 ) -> None:
     failure = classify_agent_failure(
         error, persisted_session=persisted_session, active_turn=active_turn
     )
 
     assert failure.retry_mode is DiscordTaskRetryMode.NONE
+    assert failure.summary == summary
 
 
 @pytest.mark.parametrize(

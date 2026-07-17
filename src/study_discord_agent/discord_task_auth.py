@@ -8,6 +8,7 @@ from study_discord_agent.discord_task_model import DiscordTaskRecord
 class DiscordTaskAccess:
     actor_id: int
     guild_id: int
+    channel_id: int
     visible_channel_ids: frozenset[int]
     manageable_channel_ids: frozenset[int]
 
@@ -44,6 +45,8 @@ def authorize(
         raise DiscordTaskAuthorizationError("task is not in this guild")
     if not _channels_are_visible(record, access):
         raise DiscordTaskAuthorizationError("task is no longer visible")
+    if access.channel_id not in {record.origin_channel_id, record.execution_channel_id}:
+        raise DiscordTaskAuthorizationError("task cannot be controlled from this channel")
     if action is DiscordTaskAction.VIEW:
         return
     if action in _OWNER_ACTIONS and access.actor_id == record.owner_id:

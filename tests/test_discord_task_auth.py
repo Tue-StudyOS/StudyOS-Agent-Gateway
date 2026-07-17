@@ -38,12 +38,14 @@ def _access(
     *,
     actor_id: int = 1,
     guild_id: int = 2,
+    channel_id: int = 4,
     visible_channel_ids: frozenset[int] = frozenset({3, 4}),
     manageable_channel_ids: frozenset[int] = frozenset(),
 ) -> DiscordTaskAccess:
     return DiscordTaskAccess(
         actor_id=actor_id,
         guild_id=guild_id,
+        channel_id=channel_id,
         visible_channel_ids=visible_channel_ids,
         manageable_channel_ids=manageable_channel_ids,
     )
@@ -64,6 +66,16 @@ def test_authorize_rejects_revoked_channel_visibility(
 
     with pytest.raises(DiscordTaskAuthorizationError, match="visible"):
         authorize(_record(), action, _access(visible_channel_ids=visible))
+
+
+@pytest.mark.parametrize("action", list(DiscordTaskAction))
+def test_authorize_rejects_actions_from_an_unrelated_visible_channel(
+    action: DiscordTaskAction,
+) -> None:
+    access = _access(channel_id=99, visible_channel_ids=frozenset({3, 4, 99}))
+
+    with pytest.raises(DiscordTaskAuthorizationError, match="channel"):
+        authorize(_record(), action, access)
 
 
 @pytest.mark.parametrize("action", list(DiscordTaskAction))
