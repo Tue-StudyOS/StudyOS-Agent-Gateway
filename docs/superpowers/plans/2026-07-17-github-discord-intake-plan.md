@@ -28,7 +28,9 @@ settings, atomic JSON stores, pytest/pytest-asyncio.
   Vulnerability scan has no active probing. Work on this requires modal instructions.
 - Fixed review actions run with `approvalPolicy=never`, a read-only sandbox, network
   disabled, web search/apps disabled, and no workspace preparation or GitHub credentials.
-  Work on this runs workspace-write in its isolated worktree with network disabled.
+  They inspect only an already-present canonical checkout and pinned local base/head object;
+  a missing object fails explicitly without clone/fetch/checkout mutation. Work on this
+  runs workspace-write in its isolated worktree with network disabled.
 - External writes require an exact explicit textual instruction; merge is always denied.
 - Results stay in the item thread by default. No action automatically posts a GitHub
   comment or review.
@@ -59,7 +61,8 @@ settings, atomic JSON stores, pytest/pytest-asyncio.
 - Modify: `tests/test_discord_bot.py`
 
 `GitHubMirrorRecord` contains opaque ID, guild/channel/card/thread IDs, validated
-repository and item identity/URL, bounded display metadata, delivery IDs and handled
+repository and item identity/URL, optional validated PR base/head commit IDs, bounded
+display metadata, delivery IDs and handled
 interaction claims, pending action reservation with preallocated task ID, active task ID,
 and revision. `GitHubMirrorStore` writes
 `$CODEX_HOME/gateway/github-mirrors.json` atomically with mode `0600`.
@@ -114,11 +117,14 @@ git commit -m "feat(discord): mirror GitHub intake cards"
 
 Add `general`, `review`, `security_review`, `vulnerability_scan`, and `implementation`
 task intents plus optional opaque `source_reference_id`. `GitHubTaskContext` carries mirror
-ID, validated repository, item kind/number, and URL. `AgentExecutionContext` carries the
+ID, validated repository, item kind/number, URL, and optional pinned PR base/head commit
+IDs. `AgentExecutionContext` carries the
 validated repository to worktree routing; prompt text never selects or overrides it.
 Each persisted intent maps to an immutable execution-policy fingerprint. The policy is
 rehydrated for Retry/Continue and sent on thread start/resume and every `turn/start`.
-Restricted sessions fail closed if the app server reports a different effective policy.
+Restricted sessions fail closed if thread start/resume reports a different effective
+policy; every turn sends the exact persisted policy because Codex 0.144.1 does not return
+an effective-policy object from `turn/start`.
 
 - [ ] **Step 1: Write failing task-model migration tests** for all intents, `general`
   defaults, and opaque references without copied GitHub content.
@@ -140,8 +146,10 @@ Restricted sessions fail closed if the app server reports a different effective 
   `approvalPolicy=never` plus `readOnly/networkAccess=false`; they use an existing local
   canonical checkout and cannot clone/fetch/create a worktree. Implementation sends
   `workspaceWrite/networkAccess=false`. Web search, apps, dynamic tool forwarding, and
-  unsafe app-server RPCs remain unavailable. A policy-class change starts a new thread;
-  response-policy mismatch fails closed.
+  unsafe app-server RPCs remain unavailable. Launch configuration disables apps, browser,
+  computer-use, MCP/dynamic tools, and web capabilities process-wide rather than trusting
+  a session fingerprint to hide them. A policy-class change starts a new thread;
+  start/resume response-policy mismatch fails closed.
 - [ ] **Step 6: Run** `.venv/bin/pytest tests/test_github_mirror_components.py tests/test_github_mirror_controller.py tests/test_agent_sessions.py tests/test_codex_app_server.py tests/test_codex_app_server_runtime.py tests/test_discord_worktrees.py tests/test_discord_task_store.py tests/test_discord_task_service.py -q` and expect failures.
 - [ ] **Step 7: Implement the components, controller, task bridge, persistence migration,
   intent prompts, item-thread delivery, and validated worktree routing**.

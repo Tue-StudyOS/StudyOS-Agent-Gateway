@@ -64,7 +64,7 @@ Active cards expose exactly four actions:
 |---|---|---|
 | Review | None | Read-only correctness, regression, tests, and maintainability review |
 | Security review | None | Read-only auth, secrets, permissions, privacy, trust, and abuse review |
-| Vulnerability scan | None | Read-only local SAST and dependency checks in the isolated worktree |
+| Vulnerability scan | None | Read-only local SAST and dependency checks against pinned objects already present in the canonical checkout |
 | Work on this | Required modal | Implement the submitted instruction in the isolated worktree |
 
 The first three actions use fixed bounded prompts and start immediately after authorization.
@@ -128,7 +128,8 @@ same interaction idempotent without retaining modal text or actor identity.
 `GitHubMirrorActionItem` resolves the current record after restart, authorizes and claims
 the interaction, creates/reuses the item thread, and passes a typed request to the shared
 task service. `GitHubTaskContext` carries mirror ID, repository full name, item kind,
-number, and URL. The task record persists only the opaque mirror reference plus intent.
+number, URL, and optional validated PR base/head commit IDs. The task record persists only
+the opaque mirror reference plus intent.
 Retry and Continue re-resolve that reference through the mirror store; a missing record is
 an explicit safe failure, never a prompt-parsing fallback.
 
@@ -147,8 +148,9 @@ All GitHub titles, bodies, comments, diffs, and repository content are delimited
 untrusted data, never instructions. Prompt construction is owned by the intent bridge:
 
 - Review and Security review forbid repository mutation and every external write.
-- Vulnerability scan permits safe local static/dependency commands, but forbids repository
-  mutation, active probing, exploitation, and every external write.
+- Vulnerability scan permits safe local static/dependency commands against pinned objects
+  already present in the canonical checkout, but forbids checkout mutation, cloning,
+  fetching, repository mutation, active probing, exploitation, and every external write.
 - Work on this permits isolated worktree changes requested by the modal instruction.
 - A modal or mention/reply may authorize a specific comment, review, label, assignment,
   push, PR creation, close, or other external write only when the user's text explicitly
