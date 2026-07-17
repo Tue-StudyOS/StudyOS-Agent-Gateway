@@ -3,6 +3,10 @@ from pathlib import Path
 
 import pytest
 
+from study_discord_agent.agent_execution_policy import (
+    AgentPolicyClass,
+    execution_policy,
+)
 from study_discord_agent.discord_worktrees import (
     DiscordWorktreeManager,
     extract_org_repo_names,
@@ -128,6 +132,87 @@ async def test_prepare_uses_channel_root_when_repo_is_ambiguous(tmp_path: Path) 
     assert workspace.repo_name is None
     assert workspace.path == tmp_path / "discord-worktrees" / "123"
     assert workspace.path.is_dir()
+
+
+@pytest.mark.asyncio
+async def test_read_only_policy_uses_existing_canonical_commit_without_worktree(
+    tmp_path: Path,
+) -> None:
+    canonical_root = tmp_path / "Tue-StudyOS"
+    canonical = canonical_root / "example"
+    _create_git_repo(canonical)
+    sha = _git(canonical, "rev-parse", "HEAD")
+    worktree_root = tmp_path / "discord-worktrees"
+    manager = DiscordWorktreeManager(str(worktree_root), str(canonical_root))
+
+    workspace = await manager.prepare(
+        "untrusted prompt selecting another repo",
+        123,
+        repository_full_name="Tue-StudyOS/example",
+        repository_commit_sha=sha,
+        execution_policy=execution_policy(AgentPolicyClass.REVIEW),
+    )
+
+    assert workspace.path == canonical
+    assert workspace.canonical_path == canonical
+    assert workspace.commit_sha == sha
+    assert not worktree_root.exists()
+
+
+@pytest.mark.asyncio
+async def test_restricted_policy_never_clones_or_accepts_missing_commit(
+    tmp_path: Path,
+) -> None:
+    canonical_root = tmp_path / "Tue-StudyOS"
+    canonical = canonical_root / "example"
+    _create_git_repo(canonical)
+    manager = DiscordWorktreeManager(
+        str(tmp_path / "discord-worktrees"), str(canonical_root)
+    )
+    policy = execution_policy(AgentPolicyClass.VULNERABILITY_SCAN)
+
+    with pytest.raises(RuntimeError, match="already exist"):
+        await manager.prepare(
+            "scan",
+            123,
+            repository_full_name="Tue-StudyOS/missing",
+            repository_commit_sha="a" * 40,
+            execution_policy=policy,
+        )
+    with pytest.raises(RuntimeError, match="commit"):
+        await manager.prepare(
+            "scan",
+            123,
+            repository_full_name="Tue-StudyOS/example",
+            repository_commit_sha="a" * 40,
+            execution_policy=policy,
+        )
+
+
+@pytest.mark.asyncio
+async def test_implementation_policy_creates_isolated_worktree_at_pinned_commit(
+    tmp_path: Path,
+) -> None:
+    canonical_root = tmp_path / "Tue-StudyOS"
+    canonical = canonical_root / "example"
+    _create_git_repo(canonical)
+    sha = _git(canonical, "rev-parse", "HEAD")
+    manager = DiscordWorktreeManager(
+        str(tmp_path / "discord-worktrees"), str(canonical_root)
+    )
+
+    workspace = await manager.prepare(
+        "implement untrusted instructions",
+        123,
+        repository_full_name="Tue-StudyOS/example",
+        repository_commit_sha=sha,
+        execution_policy=execution_policy(AgentPolicyClass.IMPLEMENTATION),
+    )
+
+    assert workspace.path == tmp_path / "discord-worktrees" / "123" / "example"
+    assert workspace.path != canonical
+    assert workspace.commit_sha == sha
+    assert _git(workspace.path, "rev-parse", "HEAD") == sha
 
 
 def _create_git_repo(path: Path) -> None:

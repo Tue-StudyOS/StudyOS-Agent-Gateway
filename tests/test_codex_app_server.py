@@ -27,6 +27,11 @@ for line in sys.stdin:
     request_id = message.get("id")
     params = message.get("params", {})
     if method == "initialize":
+        if params.get("capabilities") != {"experimentalApi": True}:
+            send({"id": request_id, "error": {
+                "code": -32600, "message": "Experimental API capability required"
+            }})
+            continue
         send({"id": request_id, "result": {
             "userAgent": "codex-test/1",
             "platformFamily": "unix",

@@ -5,6 +5,11 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from study_discord_agent.agent_execution_policy import (
+    AgentExecutionPolicy,
+    AgentPolicyClass,
+)
+
 logger = logging.getLogger(__name__)
 
 REPO_NAME_PATTERN = r"[A-Za-z0-9._-]+"
@@ -15,6 +20,7 @@ class DiscordWorkspace:
     path: Path
     repo_name: str | None = None
     canonical_path: Path | None = None
+    commit_sha: str | None = None
 
 
 class DiscordWorktreeManager:
@@ -34,8 +40,20 @@ class DiscordWorktreeManager:
         channel_id: int,
         *,
         repository_full_name: str | None = None,
+        repository_commit_sha: str | None = None,
+        execution_policy: AgentExecutionPolicy | None = None,
     ) -> DiscordWorkspace:
         channel_root = self._worktree_root / str(channel_id)
+        if execution_policy is not None:
+            if repository_full_name is None or repository_commit_sha is None:
+                raise ValueError("Restricted execution requires repository and commit context")
+            repo_name = self._repository_name_from_context(repository_full_name)
+            return await self._prepare_restricted_workspace(
+                channel_root,
+                repo_name,
+                repository_commit_sha,
+                execution_policy,
+            )
         if repository_full_name is not None:
             repo_name = self._repository_name_from_context(repository_full_name)
             return await self._prepare_repo_workspace(channel_root, repo_name)
@@ -50,6 +68,37 @@ class DiscordWorktreeManager:
             return DiscordWorkspace(path=channel_root)
 
         return await self._prepare_repo_workspace(channel_root, repo_names[0])
+
+    async def _prepare_restricted_workspace(
+        self,
+        channel_root: Path,
+        repo_name: str,
+        commit_sha: str,
+        policy: AgentExecutionPolicy,
+    ) -> DiscordWorkspace:
+        canonical_path = self._canonical_root / repo_name
+        await self._require_canonical_repo(canonical_path)
+        pinned_sha = await _resolve_commit(canonical_path, commit_sha)
+        if policy.policy_class is not AgentPolicyClass.IMPLEMENTATION:
+            return DiscordWorkspace(
+                path=canonical_path,
+                repo_name=repo_name,
+                canonical_path=canonical_path,
+                commit_sha=pinned_sha,
+            )
+        worktree_path = channel_root / repo_name
+        await self._ensure_worktree(canonical_path, worktree_path, pinned_sha)
+        return DiscordWorkspace(
+            path=worktree_path,
+            repo_name=repo_name,
+            canonical_path=canonical_path,
+            commit_sha=pinned_sha,
+        )
+
+    @staticmethod
+    async def _require_canonical_repo(canonical_path: Path) -> None:
+        if not canonical_path.exists() or not await _is_git_worktree(canonical_path):
+            raise RuntimeError("Restricted repository must already exist locally")
 
     async def _prepare_repo_workspace(
         self,
@@ -116,7 +165,12 @@ class DiscordWorktreeManager:
             env=env,
         )
 
-    async def _ensure_worktree(self, canonical_path: Path, worktree_path: Path) -> None:
+    async def _ensure_worktree(
+        self,
+        canonical_path: Path,
+        worktree_path: Path,
+        commit_sha: str = "HEAD",
+    ) -> None:
         if worktree_path.exists():
             if await _is_git_worktree(worktree_path):
                 return
@@ -136,7 +190,7 @@ class DiscordWorktreeManager:
                 "add",
                 "--detach",
                 str(worktree_path),
-                "HEAD",
+                commit_sha,
             ],
         )
 
@@ -171,6 +225,26 @@ async def _is_git_worktree(path: Path) -> bool:
     )
     stdout, _ = await process.communicate()
     return process.returncode == 0 and stdout.decode().strip() == "true"
+
+
+async def _resolve_commit(path: Path, commit_sha: str) -> str:
+    if re.fullmatch(r"[0-9a-f]{40,64}", commit_sha) is None:
+        raise ValueError("Restricted repository commit is invalid")
+    process = await asyncio.create_subprocess_exec(
+        "git",
+        "-C",
+        str(path),
+        "rev-parse",
+        "--verify",
+        f"{commit_sha}^{{commit}}",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    stdout, _ = await process.communicate()
+    resolved = stdout.decode().strip()
+    if process.returncode != 0 or re.fullmatch(r"[0-9a-f]{40,64}", resolved) is None:
+        raise RuntimeError("Restricted repository commit is unavailable locally")
+    return resolved
 
 
 async def _run_checked(args: list[str], env: dict[str, str] | None = None) -> None:

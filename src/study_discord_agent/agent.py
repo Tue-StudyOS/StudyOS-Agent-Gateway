@@ -11,6 +11,7 @@ from study_discord_agent.agent_errors import (
     AgentInvalidOutput,
     AgentWorkspaceOrAttachmentError,
 )
+from study_discord_agent.agent_execution_policy import AgentExecutionPolicy
 from study_discord_agent.agent_progress import AgentProgress
 from study_discord_agent.agent_webhook import request_agent_webhook
 from study_discord_agent.artifacts import parse_agent_reply
@@ -49,7 +50,15 @@ class AgentExecutionContext:
     channel_id: int
     trigger_event_id: int
     repository_full_name: str | None = None
+    repository_commit_sha: str | None = None
+    execution_policy: AgentExecutionPolicy | None = None
     require_existing_session: bool = False
+
+    def __post_init__(self) -> None:
+        if self.execution_policy is not None and (
+            self.repository_full_name is None or self.repository_commit_sha is None
+        ):
+            raise ValueError("Restricted execution requires repository and commit context")
 
 
 @dataclass(frozen=True)
@@ -198,6 +207,8 @@ class AgentGateway:
             prompt,
             execution.channel_id if execution else None,
             execution.repository_full_name if execution else None,
+            execution.repository_commit_sha if execution else None,
+            execution.execution_policy if execution else None,
         )
         if workspace:
             args = with_codex_cd_args(args, workspace.path)
@@ -224,6 +235,9 @@ class AgentGateway:
                 local_images=image_paths,
                 on_progress=on_progress,
                 require_existing_thread=execution.require_existing_session,
+                execution_policy=execution.execution_policy,
+                repository_full_name=execution.repository_full_name,
+                commit_sha=workspace.commit_sha if workspace else None,
             )
             command_result = AgentCommandResult(
                 message=result.message,
@@ -293,7 +307,17 @@ class AgentGateway:
         prompt: str,
         channel_id: int | None,
         repository_full_name: str | None,
+        repository_commit_sha: str | None,
+        execution_policy: AgentExecutionPolicy | None,
     ) -> DiscordWorkspace | None:
+        if execution_policy is not None and (
+            self._discord_worktrees is None
+            or channel_id is None
+            or not is_codex_exec_command(args)
+        ):
+            raise AgentWorkspaceOrAttachmentError(
+                "Restricted Discord workspace is not configured"
+            )
         if (
             self._discord_worktrees is None
             or channel_id is None
@@ -305,6 +329,8 @@ class AgentGateway:
                 prompt,
                 channel_id,
                 repository_full_name=repository_full_name,
+                repository_commit_sha=repository_commit_sha,
+                execution_policy=execution_policy,
             )
         except (OSError, RuntimeError, ValueError) as exc:
             raise AgentWorkspaceOrAttachmentError(

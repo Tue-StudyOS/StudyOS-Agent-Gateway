@@ -1,6 +1,7 @@
 import asyncio
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
+from typing import cast
 
 from study_discord_agent.codex_app_server_protocol import (
     ApprovalPolicy,
@@ -57,7 +58,8 @@ class CodexAppServerClient:
                             "name": "studyos_agent_gateway",
                             "title": "StudyOS Agent Gateway",
                             "version": "0.1.0",
-                        }
+                        },
+                        "capabilities": {"experimentalApi": True},
                     },
                 )
                 self._initialize_result = _parse_initialize_result(result)
@@ -80,6 +82,9 @@ class CodexAppServerClient:
         sandbox: SandboxMode | None = None,
         config: Mapping[str, JsonValue] | None = None,
         developer_instructions: str | None = None,
+        dynamic_tools: Sequence[JsonObject] | None = None,
+        environments: Sequence[JsonObject] | None = None,
+        runtime_workspace_roots: Sequence[str | Path] | None = None,
     ) -> ThreadRef:
         params = _thread_params(
             cwd,
@@ -89,6 +94,9 @@ class CodexAppServerClient:
             sandbox,
             config,
             developer_instructions,
+            dynamic_tools,
+            environments,
+            runtime_workspace_roots,
         )
         return _parse_thread(await self._request("thread/start", params))
 
@@ -103,6 +111,7 @@ class CodexAppServerClient:
         sandbox: SandboxMode | None = None,
         config: Mapping[str, JsonValue] | None = None,
         developer_instructions: str | None = None,
+        runtime_workspace_roots: Sequence[str | Path] | None = None,
     ) -> ThreadRef:
         params = _thread_params(
             cwd,
@@ -112,6 +121,9 @@ class CodexAppServerClient:
             sandbox,
             config,
             developer_instructions,
+            None,
+            None,
+            runtime_workspace_roots,
         )
         params["threadId"] = _nonempty(thread_id, "thread id")
         return _parse_thread(await self._request("thread/resume", params))
@@ -122,11 +134,36 @@ class CodexAppServerClient:
         prompt: str,
         *,
         local_images: Sequence[str | Path] = (),
+        approval_policy: ApprovalPolicy | None = None,
+        sandbox_policy: JsonObject | None = None,
+        environments: Sequence[JsonObject] | None = None,
+        cwd: str | Path | None = None,
+        runtime_workspace_roots: Sequence[str | Path] | None = None,
     ) -> TurnRef:
         thread_id = _nonempty(thread_id, "thread id")
         result = await self._request(
             "turn/start",
-            {"threadId": thread_id, "input": _user_input(prompt, local_images)},
+            {
+                "threadId": thread_id,
+                "input": _user_input(prompt, local_images),
+                **({"approvalPolicy": approval_policy} if approval_policy else {}),
+                **({"sandboxPolicy": sandbox_policy} if sandbox_policy else {}),
+                **(
+                    {"environments": list(environments)}
+                    if environments is not None
+                    else {}
+                ),
+                **({"cwd": str(cwd)} if cwd is not None else {}),
+                **(
+                    {
+                        "runtimeWorkspaceRoots": [
+                            str(root) for root in runtime_workspace_roots
+                        ]
+                    }
+                    if runtime_workspace_roots is not None
+                    else {}
+                ),
+            },
         )
         return TurnRef(
             thread_id=thread_id,
@@ -181,6 +218,9 @@ def _thread_params(
     sandbox: SandboxMode | None,
     config: Mapping[str, JsonValue] | None,
     developer_instructions: str | None,
+    dynamic_tools: Sequence[JsonObject] | None,
+    environments: Sequence[JsonObject] | None,
+    runtime_workspace_roots: Sequence[str | Path] | None,
 ) -> JsonObject:
     values: dict[str, JsonValue | Path] = {
         "cwd": cwd,
@@ -190,6 +230,13 @@ def _thread_params(
         "sandbox": sandbox,
         "config": dict(config) if config is not None else None,
         "developerInstructions": developer_instructions,
+        "dynamicTools": list(dynamic_tools) if dynamic_tools is not None else None,
+        "environments": list(environments) if environments is not None else None,
+        "runtimeWorkspaceRoots": (
+            [str(root) for root in runtime_workspace_roots]
+            if runtime_workspace_roots is not None
+            else None
+        ),
     }
     return {
         key: str(value) if isinstance(value, Path) else value
@@ -218,7 +265,17 @@ def _parse_initialize_result(result: JsonObject) -> InitializeResult:
 
 
 def _parse_thread(result: JsonObject) -> ThreadRef:
-    return ThreadRef(thread_id=_string_field(_object_field(result, "thread"), "id"))
+    approval = result.get("approvalPolicy")
+    sandbox = result.get("sandbox")
+    return ThreadRef(
+        thread_id=_string_field(_object_field(result, "thread"), "id"),
+        approval_policy=(
+            cast(ApprovalPolicy, approval)
+            if approval in {"untrusted", "on-request", "never"}
+            else None
+        ),
+        sandbox_policy=dict(sandbox) if isinstance(sandbox, dict) else None,
+    )
 
 
 def _object_field(value: JsonObject, key: str) -> JsonObject:

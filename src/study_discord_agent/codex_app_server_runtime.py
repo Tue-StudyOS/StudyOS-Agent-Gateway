@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import cast
 
 from study_discord_agent.agent_errors import AgentTurnTimedOut
+from study_discord_agent.agent_execution_policy import AgentExecutionPolicy
 from study_discord_agent.codex_app_server import CodexAppServerClient
 from study_discord_agent.codex_app_server_connection import ClientFactory, CodexAppServerConnection
 from study_discord_agent.codex_app_server_events import is_not_steerable_error, notification_turn_id
@@ -89,6 +90,9 @@ class CodexAppServerRuntime:
         local_images: Sequence[str | Path] = (),
         on_progress: ProgressSink | None = None,
         require_existing_thread: bool = False,
+        execution_policy: AgentExecutionPolicy | None = None,
+        repository_full_name: str | None = None,
+        commit_sha: str | None = None,
     ) -> AppServerTurnResult:
         client = await self._start_client()
         generation = self._connection.generation
@@ -108,11 +112,29 @@ class CodexAppServerRuntime:
                 approval_policy=self._approval_policy,
                 sandbox=self._sandbox,
                 require_existing=require_existing_thread,
+                execution_policy=execution_policy,
+                repository_full_name=repository_full_name,
+                commit_sha=commit_sha,
             )
             await self._ensure_current_generation(generation)
             async with self._lock:
                 self._starting_threads[channel_id] = thread_id
-            turn = await client.start_turn(thread_id, prompt, local_images=local_images)
+            turn = await client.start_turn(
+                thread_id,
+                prompt,
+                local_images=local_images,
+                approval_policy=(
+                    execution_policy.approval_policy if execution_policy else None
+                ),
+                sandbox_policy=(
+                    execution_policy.sandbox_policy if execution_policy else None
+                ),
+                environments=() if execution_policy is not None else None,
+                cwd=cwd if execution_policy is not None else None,
+                runtime_workspace_roots=(cwd,)
+                if execution_policy is not None and cwd is not None
+                else None,
+            )
             await self._ensure_current_generation(generation)
             loop = asyncio.get_running_loop()
             state = ActiveTurn(

@@ -38,6 +38,7 @@ class _FakePersistentRuntime:
         local_images: tuple[Path, ...] = (),
         on_progress: object = None,
         require_existing_thread: bool = False,
+        **_: object,
     ) -> AppServerTurnResult:
         del prompt, local_images, on_progress
         self.calls.append(

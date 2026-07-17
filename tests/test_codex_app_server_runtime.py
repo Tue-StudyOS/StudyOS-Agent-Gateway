@@ -106,6 +106,7 @@ class FakeAppServerClient:
         prompt: str,
         *,
         local_images: Sequence[str | Path] = (),
+        **_: object,
     ) -> TurnRef:
         self.started_turns.append((thread_id, prompt, tuple(local_images)))
         self.turn_started.set()

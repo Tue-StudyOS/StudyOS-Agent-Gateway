@@ -20,6 +20,8 @@ class InitializeResult:
 @dataclass(frozen=True)
 class ThreadRef:
     thread_id: str
+    approval_policy: ApprovalPolicy | None = None
+    sandbox_policy: JsonObject | None = None
 
 
 @dataclass(frozen=True)

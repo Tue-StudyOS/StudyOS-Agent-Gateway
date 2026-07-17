@@ -16,7 +16,12 @@ def test_live_command_maps_policy_and_cwd() -> None:
         ]
     )
 
-    assert launch.command == ("codex", "app-server", "--listen", "stdio://")
+    assert launch.command[:4] == ("codex", "app-server", "--listen", "stdio://")
+    assert 'web_search="disabled"' in launch.command
+    assert "mcp_servers={}" in launch.command
+    assert tuple(
+        launch.command[launch.command.index("--disable") :][:2]
+    ) == ("--disable", "apps")
     assert launch.approval_policy == "never"
     assert launch.sandbox == "danger-full-access"
     assert launch.cwd == "/workspaces"
