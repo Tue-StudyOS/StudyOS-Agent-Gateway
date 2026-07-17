@@ -180,6 +180,9 @@ class DiscordTaskCardMessenger:
             if not isinstance(message, _DiscordMessage):
                 raise RuntimeError("Discord task card message is not editable")
             await message.edit(
+                content=None,
+                embeds=[],
+                attachments=[],
                 view=build_task_card(current, progress, controls),
                 allowed_mentions=discord.AllowedMentions.none(),
             )
@@ -206,7 +209,7 @@ def _reply_text(message: str) -> str | None:
 
 
 def _definitive_send_failure(error: BaseException) -> bool:
-    if isinstance(error, (discord.Forbidden, discord.NotFound)):
+    if isinstance(error, (discord.Forbidden, discord.NotFound, discord.RateLimited)):
         return True
     if isinstance(error, discord.HTTPException):
         return error.status < 500

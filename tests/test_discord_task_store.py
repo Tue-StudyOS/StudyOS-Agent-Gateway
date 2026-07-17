@@ -16,6 +16,7 @@ from study_discord_agent.discord_task_model import (
     DiscordTaskState,
     transition,
 )
+from study_discord_agent.discord_task_serialization import encode_document
 from study_discord_agent.discord_task_store import (
     DiscordTaskStore,
     TaskAlreadyExists,
@@ -105,6 +106,35 @@ def test_create_round_trips_only_explicit_schema_with_owner_only_permissions(
     }
     assert os.stat(tmp_path / "discord-tasks.json").st_mode & 0o777 == 0o600
     assert DiscordTaskStore(tmp_path / "discord-tasks.json").get(_record().task_id) == _record()
+
+
+def test_hyphenated_task_id_is_retrievable_through_component_hex_id(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    record = _record()
+    store.create(record)
+
+    assert store.get("123e4567e89b12d3a456426614174000") == record
+    updated = store.compare_and_set(
+        "123e4567e89b12d3a456426614174000",
+        record.revision,
+        lambda current: transition(
+            current, DiscordTaskState.RUNNING, NOW.isoformat()
+        ),
+    )
+
+    assert updated.state is DiscordTaskState.RUNNING
+
+
+def test_load_rejects_uuid_alias_duplicates(tmp_path: Path) -> None:
+    first = _record()
+    alias = _record(task_id="123e4567e89b12d3a456426614174000")
+    path = tmp_path / "discord-tasks.json"
+    path.write_text(encode_document({first.task_id: first, alias.task_id: alias}))
+
+    with pytest.raises(TaskStoreCorruptionError):
+        DiscordTaskStore(path)
 
 
 @pytest.mark.parametrize(

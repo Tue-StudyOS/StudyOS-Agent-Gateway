@@ -4,6 +4,11 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
+from study_discord_agent.discord_task_ids import (
+    contains_task_id,
+    lookup_task_key,
+    validate_unique_task_ids,
+)
 from study_discord_agent.discord_task_model import (
     ACTIVE_STATES,
     DiscordTaskFailure,
@@ -51,7 +56,7 @@ class DiscordTaskStore:
 
     def create(self, record: DiscordTaskRecord) -> None:
         with self._lock:
-            if record.task_id in self._tasks:
+            if contains_task_id(self._tasks, record.task_id):
                 raise TaskAlreadyExists(record.task_id)
             if record.continued_from_task_id is not None or record.continued_to_task_id is not None:
                 raise ValueError("continuation links may only be created by link_child")
@@ -64,7 +69,7 @@ class DiscordTaskStore:
 
     def get(self, task_id: str) -> DiscordTaskRecord:
         with self._lock:
-            return self._tasks[task_id]
+            return self._tasks[lookup_task_key(self._tasks, task_id)]
 
     def records(self) -> tuple[DiscordTaskRecord, ...]:
         with self._lock:
@@ -79,15 +84,20 @@ class DiscordTaskStore:
         if type(expected_revision) is not int or expected_revision < 0:
             raise ValueError("expected_revision must be a non-negative integer")
         with self._lock:
-            current = self._tasks[task_id]
+            task_key = lookup_task_key(self._tasks, task_id)
+            current = self._tasks[task_key]
             if current.revision != expected_revision:
                 raise TaskRevisionConflict(task_id)
             candidate = update(current)
             self._validate_update(current, candidate)
-            self._ensure_execution_available(candidate, self._tasks, ignore_task_id=task_id)
+            self._ensure_execution_available(
+                candidate,
+                self._tasks,
+                ignore_task_id=task_key,
+            )
             updated = replace(candidate, revision=current.revision + 1)
             tasks = dict(self._tasks)
-            tasks[task_id] = updated
+            tasks[task_key] = updated
             self._commit(tasks)
             return updated
 
@@ -97,7 +107,8 @@ class DiscordTaskStore:
         if type(expected_revision) is not int or expected_revision < 0:
             raise ValueError("expected_revision must be a non-negative integer")
         with self._lock:
-            parent = self._tasks[parent_id]
+            parent_key = lookup_task_key(self._tasks, parent_id)
+            parent = self._tasks[parent_key]
             if parent.revision != expected_revision:
                 raise TaskRevisionConflict(parent_id)
             if (
@@ -105,7 +116,7 @@ class DiscordTaskStore:
                 or parent.continued_to_task_id is not None
             ):
                 raise ValueError("only an unlinked completed task can continue")
-            if child.task_id in self._tasks:
+            if contains_task_id(self._tasks, child.task_id):
                 raise TaskAlreadyExists(child.task_id)
             if child.attempt != 1:
                 raise ValueError("continuation child must start at attempt one")
@@ -124,7 +135,7 @@ class DiscordTaskStore:
                 updated_at=_timestamp(self._clock()),
             )
             tasks = dict(self._tasks)
-            tasks[parent_id] = linked_parent
+            tasks[parent_key] = linked_parent
             tasks[child.task_id] = child
             self._commit(tasks)
             return linked_parent, child
@@ -151,12 +162,13 @@ class DiscordTaskStore:
         if type(expected_revision) is not int or expected_revision < 0:
             raise ValueError("expected_revision must be a non-negative integer")
         with self._lock:
-            current = self._tasks[task_id]
+            task_key = lookup_task_key(self._tasks, task_id)
+            current = self._tasks[task_key]
             if current.revision != expected_revision:
                 raise TaskRevisionConflict(task_id)
             tasks, neighbors = forget_inactive_task(
                 self._tasks,
-                task_id,
+                task_key,
                 updated_at=_timestamp(self._clock()),
             )
             self._commit(tasks)
@@ -167,6 +179,7 @@ class DiscordTaskStore:
             return {}
         try:
             tasks = decode_document(self._path.read_text(encoding="utf-8"))
+            validate_unique_task_ids(tasks)
             validate_continuation_graph(tasks)
             return tasks
         except OSError as error:

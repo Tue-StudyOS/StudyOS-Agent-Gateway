@@ -30,7 +30,7 @@ class _Response:
     def __init__(self) -> None:
         self.done = False
         self.events: list[str] = []
-        self.messages: list[tuple[str, bool]] = []
+        self.messages: list[tuple[str, bool, discord.AllowedMentions]] = []
         self.modal: discord.ui.Modal | None = None
 
     def is_done(self) -> bool:
@@ -48,10 +48,9 @@ class _Response:
         ephemeral: bool,
         allowed_mentions: discord.AllowedMentions,
     ) -> None:
-        del allowed_mentions
         self.done = True
         self.events.append("message")
-        self.messages.append((content, ephemeral))
+        self.messages.append((content, ephemeral, allowed_mentions))
 
     async def send_modal(self, modal: discord.ui.Modal) -> None:
         self.done = True
@@ -61,7 +60,7 @@ class _Response:
 
 class _Followup:
     def __init__(self) -> None:
-        self.messages: list[tuple[str, bool]] = []
+        self.messages: list[tuple[str, bool, discord.AllowedMentions]] = []
 
     async def send(
         self,
@@ -70,8 +69,7 @@ class _Followup:
         ephemeral: bool,
         allowed_mentions: discord.AllowedMentions,
     ) -> None:
-        del allowed_mentions
-        self.messages.append((content, ephemeral))
+        self.messages.append((content, ephemeral, allowed_mentions))
 
 
 class _Interaction:
@@ -95,6 +93,11 @@ class _Store:
         return self.record
 
 
+class _MissingStore:
+    def get(self, task_id: str) -> DiscordTaskRecord:
+        raise KeyError(task_id)
+
+
 class _Service:
     def __init__(self, record: DiscordTaskRecord) -> None:
         self.record = record
@@ -102,6 +105,7 @@ class _Service:
         self.retry_calls: list[int] = []
         self.steer_prompts: list[str] = []
         self.continue_prompts: list[str] = []
+        self.refresh_calls: list[str] = []
 
     def status(
         self, task_id: str, access: DiscordTaskAccess
@@ -146,6 +150,13 @@ class _Service:
         self.continue_prompts.append(request.prompt)
         return self.record
 
+    async def refresh_card(
+        self, task_id: str, access: DiscordTaskAccess
+    ) -> DiscordTaskRecord:
+        assert access.actor_id > 0
+        self.refresh_calls.append(task_id)
+        return self.record
+
 
 async def _access(
     interaction: _Interaction, record: DiscordTaskRecord
@@ -186,7 +197,9 @@ async def test_stop_defers_then_uses_fresh_authorized_service_action() -> None:
 
     assert interaction.response.events == ["defer"]
     assert service.stop_calls == [900]
-    assert interaction.followup.messages == [("Stopping the task now.", True)]
+    assert interaction.followup.messages[0][:2] == ("Stopping the task now.", True)
+    assert interaction.followup.messages[0][2].everyone is False
+    assert service.refresh_calls == [TASK_ID]
 
 
 @pytest.mark.asyncio
@@ -236,7 +249,8 @@ async def test_add_context_opens_modal_as_first_response_and_reauthorizes_submit
 
     assert submit.response.events == ["defer"]
     assert service.steer_prompts == ["Use the new course catalog"]
-    assert submit.followup.messages == [("Added the new context.", True)]
+    assert submit.followup.messages[0][:2] == ("Added the new context.", True)
+    assert service.refresh_calls == [TASK_ID]
 
 
 @pytest.mark.asyncio
@@ -272,7 +286,7 @@ async def test_why_failure_is_safe_ephemeral_detail() -> None:
         ),
         card_message_id=500,
     )
-    controller, _ = _controller(record)
+    controller, service = _controller(record)
     interaction = _Interaction()
 
     await controller.handle_task_action(
@@ -286,3 +300,74 @@ async def test_why_failure_is_safe_ephemeral_detail() -> None:
     assert "configuration" in detail
     assert "Retry is not safe" in detail
     assert TASK_ID in detail
+    assert service.refresh_calls == [TASK_ID]
+
+
+@pytest.mark.asyncio
+async def test_moderator_can_stop_but_cannot_open_owner_modal() -> None:
+    record = replace(
+        stored_record(TASK_ID, DiscordTaskState.RUNNING), card_message_id=500
+    )
+    controller, service = _controller(record)
+    moderator = _Interaction(actor_id=7)
+
+    await controller.handle_task_action(
+        DiscordTaskComponentAction.STOP,
+        TASK_ID,
+        cast(Any, moderator),
+    )
+
+    assert service.stop_calls == [900]
+
+    modal_attempt = _Interaction(actor_id=7)
+    await controller.handle_task_action(
+        DiscordTaskComponentAction.ADD_CONTEXT,
+        TASK_ID,
+        cast(Any, modal_attempt),
+    )
+
+    assert modal_attempt.response.modal is None
+    assert "owner" in modal_attempt.response.messages[0][0]
+
+
+@pytest.mark.asyncio
+async def test_unknown_task_returns_generic_error_without_identifier_echo() -> None:
+    record = replace(
+        stored_record(TASK_ID, DiscordTaskState.RUNNING), card_message_id=500
+    )
+    service = _Service(record)
+    controller = DiscordTaskInteractionController(
+        cast(Any, _MissingStore()), cast(Any, service), cast(Any, _access)
+    )
+    interaction = _Interaction()
+
+    await controller.handle_task_action(
+        DiscordTaskComponentAction.STOP,
+        "ffffffffffffffffffffffffffffffff",
+        cast(Any, interaction),
+    )
+
+    message, ephemeral, allowed_mentions = interaction.response.messages[0]
+    assert message == "That task was not found or is no longer available."
+    assert ephemeral
+    assert allowed_mentions.everyone is False
+
+
+@pytest.mark.asyncio
+async def test_blank_modal_instructions_are_rejected_explicitly() -> None:
+    record = replace(
+        stored_record(TASK_ID, DiscordTaskState.RUNNING), card_message_id=500
+    )
+    controller, service = _controller(record)
+    interaction = _Interaction()
+
+    await controller.submit_instruction(
+        DiscordTaskComponentAction.ADD_CONTEXT,
+        TASK_ID,
+        500,
+        "   ",
+        cast(Any, interaction),
+    )
+
+    assert service.steer_prompts == []
+    assert interaction.followup.messages[0][0] == "Instructions cannot be empty."

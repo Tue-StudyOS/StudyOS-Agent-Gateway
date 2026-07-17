@@ -204,6 +204,13 @@ class DiscordTaskService:
     ) -> DiscordTaskControlState:
         return await self._queries.resolve_controls(task_id, access)
 
+    async def refresh_card(
+        self, task_id: str, access: DiscordTaskAccess
+    ) -> DiscordTaskRecord:
+        record = self._queries.status(task_id, access)
+        await self._runtime.render(record)
+        return record
+
     async def reconcile_startup(self) -> tuple[DiscordTaskRecord, ...]:
         self._ensure_open()
         return await self._reconciler.reconcile()

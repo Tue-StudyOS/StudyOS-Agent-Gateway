@@ -274,3 +274,4 @@ async def test_close_cancels_without_claiming_stop_and_retries_staging_cleanup(
     assert inputs.cleanup_calls == 1
     assert cleanup_retries == 1
     assert not release.is_set()
+    assert harness.presentation.close_calls == 1

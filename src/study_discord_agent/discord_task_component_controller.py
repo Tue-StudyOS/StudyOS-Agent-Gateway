@@ -67,6 +67,10 @@ class _TaskService(Protocol):
         interaction_id: int,
     ) -> DiscordTaskRecord: ...
 
+    async def refresh_card(
+        self, task_id: str, access: DiscordTaskAccess
+    ) -> DiscordTaskRecord: ...
+
 
 class DiscordTaskInteractionController:
     def __init__(
@@ -89,14 +93,19 @@ class DiscordTaskInteractionController:
             record = self._store.get(task_id)
             _validate_card_interaction(record, interaction)
         except (KeyError, DiscordTaskAuthorizationError) as error:
-            await _respond_error(interaction, str(error))
+            await _respond_error(interaction, _public_error(error))
             return
         if action in {
             DiscordTaskComponentAction.ADD_CONTEXT,
             DiscordTaskComponentAction.CONTINUE,
         }:
-            if interaction.user.id != record.owner_id:
-                await _respond_error(interaction, "Only the task owner may use this action.")
+            try:
+                access = await self._resolve_access(interaction, record)
+                record = self._service.status(task_id, access)
+                _validate_card_interaction(record, interaction)
+                authorize(record, _modal_action(action), access)
+            except (KeyError, DiscordTaskAuthorizationError) as error:
+                await _respond_error(interaction, _public_error(error))
                 return
             await interaction.response.send_modal(
                 DiscordTaskInstructionModal(self.submit_instruction, action, record)
@@ -108,6 +117,7 @@ class DiscordTaskInteractionController:
             record = self._service.status(task_id, access)
             _validate_card_interaction(record, interaction)
             message = await self._perform_immediate(action, record, access, interaction.id)
+            await self._service.refresh_card(task_id, access)
         except (KeyError, DiscordTaskAuthorizationError, DiscordTaskActionUnavailable) as error:
             await _respond_error(interaction, _public_error(error))
             return
@@ -147,6 +157,9 @@ class DiscordTaskInteractionController:
         interaction: discord.Interaction,
     ) -> None:
         await interaction.response.defer(ephemeral=True, thinking=True)
+        if not prompt.strip():
+            await _respond_error(interaction, "Instructions cannot be empty.")
+            return
         try:
             record = self._store.get(task_id)
             _validate_modal_submit(record, interaction, expected_card_id)
@@ -182,6 +195,7 @@ class DiscordTaskInteractionController:
                 message = "Continuation started."
             else:
                 raise DiscordTaskActionUnavailable("This modal action is unavailable.")
+            await self._service.refresh_card(task_id, access)
         except (KeyError, DiscordTaskAuthorizationError, DiscordTaskActionUnavailable) as error:
             await _respond_error(interaction, _public_error(error))
             return
@@ -251,8 +265,18 @@ def _empty_attachments() -> StagedDiscordAttachments:
 
 
 def _public_error(error: Exception) -> str:
+    if isinstance(error, KeyError):
+        return "That task was not found or is no longer available."
     text = str(error)
     return text if text else "That task action is unavailable."
+
+
+def _modal_action(action: DiscordTaskComponentAction) -> DiscordTaskAction:
+    if action is DiscordTaskComponentAction.ADD_CONTEXT:
+        return DiscordTaskAction.STEER
+    if action is DiscordTaskComponentAction.CONTINUE:
+        return DiscordTaskAction.CONTINUE
+    raise DiscordTaskActionUnavailable("This modal action is unavailable.")
 
 
 async def _respond(interaction: discord.Interaction, message: str) -> None:

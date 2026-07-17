@@ -34,6 +34,7 @@ class DiscordTaskProgressCoordinator:
         self._min_interval = min_edit_interval_seconds
         self._monotonic = monotonic
         self._entries: dict[str, _ProgressEntry] = {}
+        self._flush_tasks: set[asyncio.Task[None]] = set()
         self._lock = asyncio.Lock()
         self._closed = False
 
@@ -53,7 +54,7 @@ class DiscordTaskProgressCoordinator:
                     0.0,
                     self._min_interval - (self._monotonic() - entry.last_render_at),
                 )
-                entry.flush_task = asyncio.create_task(self._flush_after(task_id, delay))
+                entry.flush_task = self._start_flush(task_id, delay)
 
     async def snapshot(self, task_id: str) -> AgentProgress | None:
         async with self._lock:
@@ -71,11 +72,7 @@ class DiscordTaskProgressCoordinator:
             if self._closed:
                 return
             self._closed = True
-            tasks = [
-                entry.flush_task
-                for entry in self._entries.values()
-                if entry.flush_task is not None
-            ]
+            tasks = tuple(self._flush_tasks)
             self._entries.clear()
             for task in tasks:
                 _cancel_unless_current(task)
@@ -107,9 +104,13 @@ class DiscordTaskProgressCoordinator:
             current.last_render_at = self._monotonic()
             current.flush_task = None
             if current.version != rendered_version and not self._closed:
-                current.flush_task = asyncio.create_task(
-                    self._flush_after(task_id, self._min_interval)
-                )
+                current.flush_task = self._start_flush(task_id, self._min_interval)
+
+    def _start_flush(self, task_id: str, delay: float) -> asyncio.Task[None]:
+        task = asyncio.create_task(self._flush_after(task_id, delay))
+        self._flush_tasks.add(task)
+        task.add_done_callback(self._flush_tasks.discard)
+        return task
 
 
 def _merge(current: AgentProgress, update: AgentProgress) -> AgentProgress:

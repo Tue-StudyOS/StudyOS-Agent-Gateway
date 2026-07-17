@@ -84,3 +84,26 @@ async def test_update_during_render_is_flushed_after_the_throttle_window() -> No
 
     assert [progress.now for progress in rendered] == ["First", "Latest"]
     await coordinator.close()
+
+
+@pytest.mark.asyncio
+async def test_close_drains_render_task_even_after_finish_removed_entry() -> None:
+    entered = asyncio.Event()
+    exited = asyncio.Event()
+
+    async def render(_task_id: str, _progress: AgentProgress) -> None:
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            exited.set()
+
+    coordinator = DiscordTaskProgressCoordinator(render, min_edit_interval_seconds=0)
+    await coordinator.update("task-1", AgentProgress(now="Rendering"))
+    await asyncio.wait_for(entered.wait(), timeout=0.5)
+    await coordinator.finish("task-1")
+
+    await asyncio.wait_for(coordinator.close(), timeout=0.5)
+
+    assert exited.is_set()
+    assert await coordinator.snapshot("task-1") is None

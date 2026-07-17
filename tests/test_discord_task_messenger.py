@@ -138,6 +138,9 @@ async def test_card_creation_and_progress_edit_use_components_v2_safely(
 
     edit = channel.messages[card_id].edits[-1]
     _assert_mentions_disabled(edit["allowed_mentions"])
+    assert edit["content"] is None
+    assert edit["embeds"] == []
+    assert edit["attachments"] == []
     assert "Running focused tests" in _rendered(edit["view"])
     await messenger.close()
 
@@ -223,6 +226,7 @@ async def test_delivery_uses_only_pinned_streams_and_non_owning_file_wrappers(
             ),
             True,
         ),
+        (discord.RateLimited(1.0), True),
     ],
 )
 async def test_delivery_classifies_definitive_and_ambiguous_send_failures(
@@ -256,3 +260,23 @@ async def test_prepare_reply_uses_task_scoped_artifact_name(tmp_path: Path) -> N
 
     assert prepared.generated_file == tmp_path / "discord-replies" / f"reply-{TASK_ID}.md"
     await messenger.close()
+
+
+@pytest.mark.asyncio
+async def test_close_cancels_delayed_progress_before_it_can_edit(tmp_path: Path) -> None:
+    running = replace(
+        stored_record(TASK_ID, DiscordTaskState.RUNNING),
+        card_message_id=500,
+    )
+    messenger, _, channel = _messenger(
+        tmp_path,
+        running,
+        min_edit_interval_seconds=0.2,
+    )
+    channel.messages[500] = _Message(500)
+    await messenger.progress_sink(TASK_ID)(AgentProgress(now="Must not render"))
+
+    await messenger.close()
+    await asyncio.sleep(0.22)
+
+    assert channel.messages[500].edits == []

@@ -118,8 +118,18 @@ class DiscordTaskRuntime:
                 logger.warning("Discord task card render failed task_id=%s", record.task_id)
 
     async def close(self) -> None:
-        await self._runners.close()
-        await self._delivery.close()
+        first_error: BaseException | None = None
+        for close in (
+            self._runners.close,
+            self._presentation.close,
+            self._delivery.close,
+        ):
+            try:
+                await close()
+            except BaseException as error:
+                first_error = first_error or error
+        if first_error is not None:
+            raise first_error
 
     async def _agent_runner(self, task_id: str, spec: AgentRunSpec) -> None:
         try:

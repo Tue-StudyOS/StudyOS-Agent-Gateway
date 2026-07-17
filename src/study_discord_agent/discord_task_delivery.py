@@ -33,6 +33,8 @@ class DiscordTaskPresentation(Protocol):
 
     def progress_sink(self, task_id: str) -> ProgressSink: ...
 
+    async def close(self) -> None: ...
+
 
 class DiscordTaskDelivery:
     """Own cache-to-send lease transfers for every Discord result attempt."""

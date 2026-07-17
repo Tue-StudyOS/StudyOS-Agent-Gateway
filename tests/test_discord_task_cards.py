@@ -6,6 +6,7 @@ import pytest
 
 from study_discord_agent.agent_progress import AgentPlanStep, AgentProgress
 from study_discord_agent.discord_task_cards import build_task_card
+from study_discord_agent.discord_task_components import DiscordTaskActionItem
 from study_discord_agent.discord_task_model import (
     DiscordTaskFailure,
     DiscordTaskFailureCategory,
@@ -17,6 +18,7 @@ from tests.test_discord_task_service_fixtures import stored_record
 
 TASK_ID = "00000000000000000000000000000001"
 NO_CONTROLS = DiscordTaskControlState(False, False, False)
+pytestmark = pytest.mark.asyncio
 
 
 def _text(view: discord.ui.LayoutView) -> str:
@@ -30,11 +32,13 @@ def _text(view: discord.ui.LayoutView) -> str:
 def _buttons(
     view: discord.ui.LayoutView,
 ) -> tuple[discord.ui.Button[discord.ui.LayoutView], ...]:
-    return tuple(
-        cast(discord.ui.Button[discord.ui.LayoutView], item)
-        for item in view.walk_children()
-        if isinstance(item, discord.ui.Button)
-    )
+    buttons: list[discord.ui.Button[discord.ui.LayoutView]] = []
+    for item in view.walk_children():
+        if isinstance(item, DiscordTaskActionItem):
+            buttons.append(item.item)
+        elif isinstance(item, discord.ui.Button):
+            buttons.append(cast(discord.ui.Button[discord.ui.LayoutView], item))
+    return tuple(buttons)
 
 
 def _button_labels(view: discord.ui.LayoutView) -> set[str]:
@@ -51,12 +55,12 @@ def _button_labels(view: discord.ui.LayoutView) -> set[str]:
             {"Stop task", "Add context"},
             {"Retry"},
         ),
-        (DiscordTaskState.STOPPING, NO_CONTROLS, set[str](), {"Stop task", "Retry"}),
+        (DiscordTaskState.STOPPING, NO_CONTROLS, {"Stop task"}, {"Retry"}),
         (DiscordTaskState.DELIVERING, NO_CONTROLS, set[str](), {"Stop task", "Retry"}),
         (DiscordTaskState.STOPPED, NO_CONTROLS, set[str](), {"Stop task", "Retry"}),
     ],
 )
-def test_card_controls_follow_public_task_state(
+async def test_card_controls_follow_public_task_state(
     state: DiscordTaskState,
     controls: DiscordTaskControlState,
     expected: set[str],
@@ -72,7 +76,7 @@ def test_card_controls_follow_public_task_state(
     assert f"`{TASK_ID[:8]}`" in _text(view)
 
 
-def test_completed_card_links_result_and_only_latest_resumable_task_continues() -> None:
+async def test_completed_card_links_result_and_only_latest_resumable_task_continues() -> None:
     record = replace(
         stored_record(TASK_ID, DiscordTaskState.COMPLETED),
         result_message_id=987,
@@ -92,7 +96,7 @@ def test_completed_card_links_result_and_only_latest_resumable_task_continues() 
     assert continuation.custom_id == f"studyos:task:continue:{TASK_ID}"
 
 
-def test_card_links_back_to_the_source_message() -> None:
+async def test_card_links_back_to_the_source_message() -> None:
     record = replace(
         stored_record(TASK_ID, DiscordTaskState.RUNNING),
         origin_channel_id=11,
@@ -114,7 +118,7 @@ def test_card_links_back_to_the_source_message() -> None:
         (DiscordTaskRetryMode.RETRY_DELIVERY, False, True),
     ],
 )
-def test_failure_card_explains_safe_reason_and_only_offers_safe_retry(
+async def test_failure_card_explains_safe_reason_and_only_offers_safe_retry(
     retry_mode: DiscordTaskRetryMode,
     resumable: bool,
     has_retry: bool,
@@ -148,7 +152,7 @@ def test_failure_card_explains_safe_reason_and_only_offers_safe_retry(
     assert "Stop task" not in _button_labels(view)
 
 
-def test_progress_is_bounded_escaped_and_does_not_overflow_card() -> None:
+async def test_progress_is_bounded_escaped_and_does_not_overflow_card() -> None:
     record = replace(
         stored_record(TASK_ID, DiscordTaskState.RUNNING),
         source_label="@here **dangerous source**",
@@ -169,7 +173,7 @@ def test_progress_is_bounded_escaped_and_does_not_overflow_card() -> None:
     assert "step 6" not in rendered
 
 
-def test_every_state_renders_a_components_v2_card() -> None:
+async def test_every_state_renders_a_components_v2_card() -> None:
     for state in DiscordTaskState:
         if state is DiscordTaskState.DELIVERY_FAILED:
             record = stored_record(
@@ -186,3 +190,26 @@ def test_every_state_renders_a_components_v2_card() -> None:
         view = build_task_card(record, None, NO_CONTROLS)
         assert isinstance(view, discord.ui.LayoutView)
         assert _text(view)
+
+
+async def test_action_buttons_are_dynamic_and_recovery_hides_stale_failure() -> None:
+    failure = DiscordTaskFailure(
+        DiscordTaskFailureCategory.RUNTIME_DISCONNECTED,
+        "The old attempt disconnected.",
+        DiscordTaskRetryMode.CONTINUE_SESSION,
+    )
+    record = stored_record(
+        TASK_ID,
+        DiscordTaskState.RECOVERING,
+        failure=failure,
+    )
+
+    view = build_task_card(
+        record,
+        None,
+        DiscordTaskControlState(False, True, False),
+    )
+
+    assert any(isinstance(item, DiscordTaskActionItem) for item in view.walk_children())
+    assert _button_labels(view) == {"Stop task"}
+    assert "old attempt" not in _text(view)

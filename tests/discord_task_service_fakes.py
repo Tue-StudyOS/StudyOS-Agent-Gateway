@@ -125,6 +125,8 @@ class FakePresentation(DiscordTaskPresentation):
         self.delivery_outcomes: list[int | BaseException] = []
         self.delivery_entered = asyncio.Event()
         self.delivery_release: asyncio.Event | None = None
+        self.close_calls = 0
+        self.close_error: BaseException | None = None
 
     def block_card(self, channel_id: int) -> asyncio.Event:
         release = asyncio.Event()
@@ -177,3 +179,8 @@ class FakePresentation(DiscordTaskPresentation):
             return None
 
         return cast(ProgressSink, sink)
+
+    async def close(self) -> None:
+        self.close_calls += 1
+        if self.close_error is not None:
+            raise self.close_error

@@ -1,9 +1,14 @@
 from datetime import datetime
+from typing import cast
 from uuid import UUID
 
 import discord
 
 from study_discord_agent.agent_progress import AgentProgress
+from study_discord_agent.discord_task_components import (
+    DiscordTaskActionItem,
+    DiscordTaskComponentAction,
+)
 from study_discord_agent.discord_task_model import (
     DiscordTaskRecord,
     DiscordTaskRetryMode,
@@ -13,6 +18,12 @@ from study_discord_agent.discord_task_service_errors import DiscordTaskControlSt
 
 MAX_CARD_TEXT = 3_900
 MAX_PROGRESS_STEPS = 6
+_FAILURE_STATES = {
+    DiscordTaskState.DELIVERY_FAILED,
+    DiscordTaskState.FAILED,
+    DiscordTaskState.INTERRUPTED,
+    DiscordTaskState.TIMED_OUT,
+}
 
 _STATE_LABELS = {
     DiscordTaskState.RECOVERING: "Recovering",
@@ -68,7 +79,7 @@ def _card_text(record: DiscordTaskRecord, progress: AgentProgress | None) -> str
         DiscordTaskState.DELIVERING,
     }:
         lines.extend(_progress_lines(progress))
-    if record.failure is not None:
+    if record.state in _FAILURE_STATES and record.failure is not None:
         lines.extend(("", f"**What happened:** {_safe(record.failure.summary)}"))
         if record.failure.retry_mode is DiscordTaskRetryMode.NONE:
             lines.append("-# Automatic retry is unavailable for this task.")
@@ -101,9 +112,9 @@ def _progress_lines(progress: AgentProgress) -> list[str]:
 def _buttons(
     record: DiscordTaskRecord,
     controls: DiscordTaskControlState,
-) -> list[discord.ui.Button[discord.ui.LayoutView]]:
+) -> list[discord.ui.Item[discord.ui.LayoutView]]:
     task_id = UUID(record.task_id).hex
-    buttons: list[discord.ui.Button[discord.ui.LayoutView]] = []
+    buttons: list[discord.ui.Item[discord.ui.LayoutView]] = []
     if record.source_message_id is not None:
         buttons.append(
             discord.ui.Button[discord.ui.LayoutView](
@@ -120,10 +131,20 @@ def _buttons(
         DiscordTaskState.RECOVERING,
         DiscordTaskState.STARTING,
         DiscordTaskState.RUNNING,
+        DiscordTaskState.STOPPING,
     }:
-        buttons.append(_action("Stop task", "stop", task_id, discord.ButtonStyle.danger))
+        buttons.append(
+            _action(
+                "Stop task",
+                DiscordTaskComponentAction.STOP,
+                task_id,
+                discord.ButtonStyle.danger,
+            )
+        )
     if record.state is DiscordTaskState.RUNNING and controls.steering:
-        buttons.append(_action("Add context", "add_context", task_id))
+        buttons.append(
+            _action("Add context", DiscordTaskComponentAction.ADD_CONTEXT, task_id)
+        )
     if record.state is DiscordTaskState.COMPLETED:
         if record.result_message_id is not None:
             buttons.append(
@@ -134,27 +155,45 @@ def _buttons(
                 )
             )
         if controls.continuable:
-            buttons.append(_action("Continue", "continue", task_id))
-    if record.failure is not None:
-        buttons.append(_action("Why it failed", "why", task_id))
+            buttons.append(
+                _action("Continue", DiscordTaskComponentAction.CONTINUE, task_id)
+            )
+    if record.state in _FAILURE_STATES and record.failure is not None:
+        buttons.append(
+            _action("Why it failed", DiscordTaskComponentAction.WHY, task_id)
+        )
         retry_mode = record.failure.retry_mode
         if retry_mode is DiscordTaskRetryMode.RETRY_DELIVERY or (
             retry_mode is DiscordTaskRetryMode.CONTINUE_SESSION and controls.resumable
         ):
-            buttons.append(_action("Retry", "retry", task_id, discord.ButtonStyle.primary))
+            buttons.append(
+                _action(
+                    "Retry",
+                    DiscordTaskComponentAction.RETRY,
+                    task_id,
+                    discord.ButtonStyle.primary,
+                )
+            )
     return buttons
 
 
 def _action(
     label: str,
-    action: str,
+    action: DiscordTaskComponentAction,
     task_id: str,
     style: discord.ButtonStyle = discord.ButtonStyle.secondary,
-) -> discord.ui.Button[discord.ui.LayoutView]:
-    return discord.ui.Button[discord.ui.LayoutView](
-        label=label,
-        style=style,
-        custom_id=f"studyos:task:{action}:{task_id}",
+) -> discord.ui.Item[discord.ui.LayoutView]:
+    return cast(
+        discord.ui.Item[discord.ui.LayoutView],
+        DiscordTaskActionItem(
+            discord.ui.Button[discord.ui.LayoutView](
+                label=label,
+                style=style,
+                custom_id=f"studyos:task:{action.value}:{task_id}",
+            ),
+            action,
+            task_id,
+        ),
     )
 
 
