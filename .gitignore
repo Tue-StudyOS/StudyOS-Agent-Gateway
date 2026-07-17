@@ -12,3 +12,4 @@ dist/
 .journal/
 .secrets/
 .worktrees/
+.superpowers/
