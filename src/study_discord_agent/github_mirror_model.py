@@ -64,6 +64,8 @@ class GitHubHandledActionClaim:
     def __post_init__(self) -> None:
         _positive_integer(self.interaction_id, "interaction_id")
         _opaque_task_id(self.task_id, "task_id")
+        if type(self.succeeded) is not bool:
+            raise ValueError("succeeded must be a boolean")
 
 
 @dataclass(frozen=True)
