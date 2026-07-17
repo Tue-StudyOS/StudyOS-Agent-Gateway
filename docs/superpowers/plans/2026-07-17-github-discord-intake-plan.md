@@ -26,6 +26,9 @@ settings, atomic JSON stores, pytest/pytest-asyncio.
   write to GitHub.
 - Review, Security review, and Vulnerability scan are read-only/local-analysis intents.
   Vulnerability scan has no active probing. Work on this requires modal instructions.
+- Fixed review actions run with `approvalPolicy=never`, a read-only sandbox, network
+  disabled, web search/apps disabled, and no workspace preparation or GitHub credentials.
+  Work on this runs workspace-write in its isolated worktree with network disabled.
 - External writes require an exact explicit textual instruction; merge is always denied.
 - Results stay in the item thread by default. No action automatically posts a GitHub
   comment or review.
@@ -92,6 +95,9 @@ git commit -m "feat(discord): mirror GitHub intake cards"
 - Create: `src/study_discord_agent/github_mirror_components.py`
 - Create: `src/study_discord_agent/github_mirror_controller.py`
 - Modify: `src/study_discord_agent/agent.py`
+- Modify: `src/study_discord_agent/codex_app_server.py`
+- Modify: `src/study_discord_agent/codex_app_server_runtime.py`
+- Modify: `src/study_discord_agent/session_store.py`
 - Modify: `src/study_discord_agent/discord_worktrees.py`
 - Modify: `src/study_discord_agent/discord_task_model.py`
 - Modify: `src/study_discord_agent/discord_task_request.py`
@@ -100,6 +106,8 @@ git commit -m "feat(discord): mirror GitHub intake cards"
 - Create: `tests/test_github_mirror_components.py`
 - Create: `tests/test_github_mirror_controller.py`
 - Modify: `tests/test_agent_sessions.py`
+- Modify: `tests/test_codex_app_server.py`
+- Modify: `tests/test_codex_app_server_runtime.py`
 - Modify: `tests/test_discord_worktrees.py`
 - Modify: `tests/test_discord_task_store.py`
 - Modify: `tests/test_discord_task_service.py`
@@ -108,6 +116,9 @@ Add `general`, `review`, `security_review`, `vulnerability_scan`, and `implement
 task intents plus optional opaque `source_reference_id`. `GitHubTaskContext` carries mirror
 ID, validated repository, item kind/number, and URL. `AgentExecutionContext` carries the
 validated repository to worktree routing; prompt text never selects or overrides it.
+Each persisted intent maps to an immutable execution-policy fingerprint. The policy is
+rehydrated for Retry/Continue and sent on thread start/resume and every `turn/start`.
+Restricted sessions fail closed if the app server reports a different effective policy.
 
 - [ ] **Step 1: Write failing task-model migration tests** for all intents, `general`
   defaults, and opaque references without copied GitHub content.
@@ -125,14 +136,20 @@ validated repository to worktree routing; prompt text never selects or overrides
   external operation appears only when explicit in user text; merge is always rejected.
   A validated `Tue-StudyOS/example` context routes to exactly that repo. Retry/Continue
   rehydrate the opaque reference after restart or fail safely without prompt parsing.
-- [ ] **Step 5: Run** `.venv/bin/pytest tests/test_github_mirror_components.py tests/test_github_mirror_controller.py tests/test_agent_sessions.py tests/test_discord_worktrees.py tests/test_discord_task_store.py tests/test_discord_task_service.py -q` and expect failures.
-- [ ] **Step 6: Implement the components, controller, task bridge, persistence migration,
+- [ ] **Step 5: Test hard runtime policy**. Review/Security/Vulnerability turns send
+  `approvalPolicy=never` plus `readOnly/networkAccess=false`; they use an existing local
+  canonical checkout and cannot clone/fetch/create a worktree. Implementation sends
+  `workspaceWrite/networkAccess=false`. Web search, apps, dynamic tool forwarding, and
+  unsafe app-server RPCs remain unavailable. A policy-class change starts a new thread;
+  response-policy mismatch fails closed.
+- [ ] **Step 6: Run** `.venv/bin/pytest tests/test_github_mirror_components.py tests/test_github_mirror_controller.py tests/test_agent_sessions.py tests/test_codex_app_server.py tests/test_codex_app_server_runtime.py tests/test_discord_worktrees.py tests/test_discord_task_store.py tests/test_discord_task_service.py -q` and expect failures.
+- [ ] **Step 7: Implement the components, controller, task bridge, persistence migration,
   intent prompts, item-thread delivery, and validated worktree routing**.
-- [ ] **Step 7: Rerun focused tests** and expect PASS.
-- [ ] **Step 8: Commit**
+- [ ] **Step 8: Rerun focused tests** and expect PASS.
+- [ ] **Step 9: Commit**
 
 ```bash
-git add src/study_discord_agent/agent.py src/study_discord_agent/discord_worktrees.py src/study_discord_agent/discord_task_model.py src/study_discord_agent/discord_task_request.py src/study_discord_agent/discord_task_store.py src/study_discord_agent/discord_task_service.py src/study_discord_agent/github_mirror_components.py src/study_discord_agent/github_mirror_controller.py tests/test_agent_sessions.py tests/test_discord_worktrees.py tests/test_discord_task_store.py tests/test_discord_task_service.py tests/test_github_mirror_components.py tests/test_github_mirror_controller.py
+git add src/study_discord_agent/agent.py src/study_discord_agent/codex_app_server.py src/study_discord_agent/codex_app_server_runtime.py src/study_discord_agent/session_store.py src/study_discord_agent/discord_worktrees.py src/study_discord_agent/discord_task_model.py src/study_discord_agent/discord_task_request.py src/study_discord_agent/discord_task_store.py src/study_discord_agent/discord_task_service.py src/study_discord_agent/github_mirror_components.py src/study_discord_agent/github_mirror_controller.py tests/test_agent_sessions.py tests/test_codex_app_server.py tests/test_codex_app_server_runtime.py tests/test_discord_worktrees.py tests/test_discord_task_store.py tests/test_discord_task_service.py tests/test_github_mirror_components.py tests/test_github_mirror_controller.py
 git commit -m "feat(discord): add explicit GitHub task actions"
 ```
 

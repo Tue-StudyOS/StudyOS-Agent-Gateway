@@ -75,6 +75,8 @@ git commit -m "feat(discord): bound task attachments and delivery retries"
 **Files:**
 - Create: `src/study_discord_agent/discord_task_request.py`
 - Create: `src/study_discord_agent/discord_task_service.py`
+- Create: `src/study_discord_agent/discord_task_delivery.py`
+- Modify: `src/study_discord_agent/discord_task_store.py`
 - Create: `tests/test_discord_task_service.py`
 
 **Interfaces:**
@@ -94,6 +96,16 @@ class DiscordTaskRequest:
     attachments: StagedDiscordAttachments
     origin_context: DiscordOriginContext | None
 
+@dataclass(frozen=True)
+class DiscordTaskSteerRequest:
+    prompt: str
+    source_message_id: int | None
+    attachments: StagedDiscordAttachments
+    origin_context: DiscordOriginContext | None
+
+class DiscordTaskDeliveryError(RuntimeError):
+    definitive_non_delivery: bool
+
 class DiscordTaskPresentation(Protocol):
     async def create_card(self, record: DiscordTaskRecord) -> int | None: ...
     async def render_card(self, record: DiscordTaskRecord) -> None: ...
@@ -103,22 +115,26 @@ class DiscordTaskPresentation(Protocol):
 
 class DiscordTaskService:
     async def start(self, request: DiscordTaskRequest) -> DiscordTaskRecord: ...
-    async def steer(self, task_id: str, access: DiscordTaskAccess, prompt: str, interaction_id: int) -> DiscordTaskRecord: ...
+    async def steer(self, task_id: str, access: DiscordTaskAccess, request: DiscordTaskSteerRequest, interaction_id: int) -> DiscordTaskRecord: ...
     async def stop(self, task_id: str, access: DiscordTaskAccess, interaction_id: int) -> DiscordTaskRecord: ...
     async def retry(self, task_id: str, access: DiscordTaskAccess, interaction_id: int) -> DiscordTaskRecord: ...
     async def continue_task(self, parent_id: str, access: DiscordTaskAccess, request: DiscordTaskRequest, interaction_id: int) -> DiscordTaskRecord: ...
+    async def forget(self, task_id: str, access: DiscordTaskAccess, interaction_id: int) -> None: ...
     def status(self, task_id: str, access: DiscordTaskAccess) -> DiscordTaskRecord: ...
+    def active_task(self, execution_channel_id: int) -> DiscordTaskRecord | None: ...
     def list_tasks(self, access: DiscordTaskAccess, scope: str, state: str, current_channel_id: int) -> tuple[DiscordTaskRecord, ...]: ...
+    async def close(self) -> None: ...
 ```
 
 - [ ] **Step 1: Write failing service tests** for one active task/channel, parallel channels, no lock over I/O, duplicate interactions/CAS, Stop-vs-completion/timeout, typed failure cards, generic same-session Retry without original prompt, definitive delivery Retry without agent execution, ambiguous delivery with no Retry, latest-only linked Continue, missing card, Forget, and cleanup.
 - [ ] **Step 2: Run** `.venv/bin/pytest tests/test_discord_task_service.py -q` and expect import failures.
-- [ ] **Step 3: Implement orchestration** with state reservations before I/O, the first interruption cause winning, `recovering` before runtime recovery, `delivering` before output, and background task ownership until cleanup.
-- [ ] **Step 4: Rerun** `.venv/bin/pytest tests/test_discord_task_service.py -q` and expect PASS.
-- [ ] **Step 5: Commit**
+- [ ] **Step 3: Implement orchestration** with state reservations before I/O, the first interruption cause winning, `recovering` before runtime recovery, `delivering` before output, and background task ownership until cleanup. `Continue` accepts only the latest task in its execution channel; `Forget` atomically deletes one inactive record and graph-safely unlinks its neighbors. Start and action IDs are deduplicated without holding an async lock over agent, presenter, filesystem, or Discord I/O.
+- [ ] **Step 4: Enforce delivery ownership**. Every attempt uses `cache.put -> cache.consume` and the returned pinned lease. Success or ambiguous transport outcome closes the lease; only a typed definitive non-delivery restores the exact lease for delivery-only Retry. Unknown transport exceptions are ambiguous. Presenter implementations must build fresh `discord.File` wrappers from pinned streams and never reopen `source_path`.
+- [ ] **Step 5: Rerun** `.venv/bin/pytest tests/test_discord_task_service.py -q` and expect PASS.
+- [ ] **Step 6: Commit**
 
 ```bash
-git add src/study_discord_agent/discord_task_request.py src/study_discord_agent/discord_task_service.py tests/test_discord_task_service.py
+git add src/study_discord_agent/discord_task_request.py src/study_discord_agent/discord_task_service.py src/study_discord_agent/discord_task_delivery.py src/study_discord_agent/discord_task_store.py tests/test_discord_task_service.py
 git commit -m "feat(discord): coordinate durable agent tasks"
 ```
 

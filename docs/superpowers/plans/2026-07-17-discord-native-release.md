@@ -62,6 +62,8 @@ def main() -> None: ...
 Register `studyos-codex-app-server-smoke = "study_discord_agent.app_server_smoke:main"`. The schema smoke runs `codex app-server generate-json-schema --experimental --out <temp>` and validates the method strings in `codex_app_server_protocol.schemas.json`.
 
 The authenticated smoke uses a temporary executable named `codex` that writes its PID then `exec`s the real binary. It verifies initialize, source-less start, progress, same-thread Continue, immediate steer, interrupt, two concurrent active turns failing as `AgentRuntimeDisconnected` after `SIGKILL`, and one replacement process resuming both stored threads.
+It also verifies the effective restricted policy returned by `thread/start`/`thread/resume`
+and sends `approvalPolicy=never` plus `readOnly/networkAccess=false` on every smoke turn.
 
 - [ ] **Step 1: Write failing CLI tests**
 
