@@ -8,7 +8,10 @@ import pytest
 from study_discord_agent.agent import AgentChannelCapabilities, AgentExecutionContext
 from study_discord_agent.codex_app_server_runtime import SteerResult
 from study_discord_agent.discord_task_inputs import StagedDiscordAttachments
-from study_discord_agent.discord_task_model import DiscordTaskState
+from study_discord_agent.discord_task_model import (
+    DiscordTaskInterruptionCause,
+    DiscordTaskState,
+)
 from study_discord_agent.discord_task_request import DiscordTaskSteerRequest
 from study_discord_agent.discord_task_service import (
     DiscordTaskActionUnavailable,
@@ -196,6 +199,51 @@ async def test_stop_claims_user_stop_before_interrupt_and_completion_cannot_win(
     await wait_for_state(harness.store, task.task_id, DiscordTaskState.STOPPED)
     assert not harness.presentation.deliver_calls
     await harness.service.close()
+
+
+@pytest.mark.asyncio
+async def test_new_stop_interaction_retries_failed_interrupt_without_reclaiming(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    harness = make_harness(tmp_path)
+    release = harness.agent.block_channel(10)
+    task = await harness.service.start(request())
+    await wait_for_state(harness.store, task.task_id, DiscordTaskState.RUNNING)
+    interrupt_calls: list[int] = []
+
+    async def interrupt_once_failed(channel_id: int) -> bool:
+        interrupt_calls.append(channel_id)
+        if len(interrupt_calls) == 1:
+            raise RuntimeError("interrupt transport failed")
+        return True
+
+    monkeypatch.setattr(harness.agent, "interrupt", interrupt_once_failed)
+
+    try:
+        with pytest.raises(RuntimeError, match="interrupt transport failed"):
+            await harness.service.stop(task.task_id, access(), interaction_id=601)
+        claimed = harness.store.get(task.task_id)
+        duplicate = await harness.service.stop(
+            task.task_id, access(), interaction_id=601
+        )
+        retried = await harness.service.stop(task.task_id, access(), interaction_id=602)
+        second_duplicate = await harness.service.stop(
+            task.task_id, access(), interaction_id=602
+        )
+        revision_after_actions = harness.store.get(task.task_id).revision
+    finally:
+        release.set()
+        await wait_for_state(harness.store, task.task_id, DiscordTaskState.STOPPED)
+        await harness.service.close()
+
+    assert claimed.state is DiscordTaskState.STOPPING
+    assert claimed.interruption_cause is DiscordTaskInterruptionCause.USER_STOP
+    assert duplicate == claimed
+    assert retried == claimed
+    assert second_duplicate == claimed
+    assert interrupt_calls == [10, 10]
+    assert revision_after_actions == claimed.revision
+    assert retried.interruption_cause is DiscordTaskInterruptionCause.USER_STOP
 
 
 @pytest.mark.asyncio

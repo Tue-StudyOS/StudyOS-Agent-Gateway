@@ -56,6 +56,17 @@ class AgentRunSpec:
             ),
         )
 
+    @classmethod
+    def for_recovery(cls, prompt: str) -> "AgentRunSpec":
+        return cls(
+            prompt=prompt,
+            source_message_id=None,
+            attachments=StagedDiscordAttachments(paths=(), directory=None),
+            origin_context=None,
+            recovering=True,
+            require_existing_session=True,
+        )
+
 
 class DiscordTaskRuntime:
     def __init__(
@@ -79,6 +90,9 @@ class DiscordTaskRuntime:
 
     async def wait_idle(self, task_id: str) -> None:
         await self._runners.wait_idle(task_id)
+
+    def ensure_open(self) -> None:
+        self._runners.ensure_open()
 
     def consume_delivery(self, task_id: str) -> PreparedDiscordReply | None:
         return self._delivery.consume(task_id)

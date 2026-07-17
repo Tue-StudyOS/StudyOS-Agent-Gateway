@@ -3,6 +3,8 @@ import logging
 from collections.abc import Coroutine
 from typing import Any
 
+from study_discord_agent.discord_task_service_errors import DiscordTaskServiceClosed
+
 logger = logging.getLogger(__name__)
 
 
@@ -10,8 +12,14 @@ class DiscordTaskRunners:
     def __init__(self) -> None:
         self._current: dict[str, asyncio.Task[None]] = {}
         self._all: set[asyncio.Task[None]] = set()
+        self._closed = False
 
     def spawn(self, task_id: str, coroutine: Coroutine[Any, Any, None]) -> None:
+        try:
+            self.ensure_open()
+        except DiscordTaskServiceClosed:
+            coroutine.close()
+            raise
         existing = self._current.get(task_id)
         if existing is not None and not existing.done():
             coroutine.close()
@@ -25,8 +33,14 @@ class DiscordTaskRunners:
         runner = self._current.get(task_id)
         if runner is not None:
             await asyncio.gather(runner, return_exceptions=True)
+        self.ensure_open()
+
+    def ensure_open(self) -> None:
+        if self._closed:
+            raise DiscordTaskServiceClosed("Discord task service is closed")
 
     async def close(self) -> None:
+        self._closed = True
         runners = tuple(self._all)
         for runner in runners:
             runner.cancel()

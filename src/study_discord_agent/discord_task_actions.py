@@ -11,7 +11,6 @@ from study_discord_agent.discord_task_auth import (
     authorize,
 )
 from study_discord_agent.discord_task_failures import classify_delivery_failure
-from study_discord_agent.discord_task_inputs import StagedDiscordAttachments
 from study_discord_agent.discord_task_model import (
     ACTIVE_STATES,
     DiscordTaskInterruptionCause,
@@ -120,7 +119,9 @@ class DiscordTaskActions:
             return self._store.get(duplicate)
         if record.state is DiscordTaskState.STOPPING:
             self._interactions.remember(interaction_id, task_id)
-            return record
+            await self._agent.interrupt(record.execution_channel_id)
+            await self._runtime.render(record)
+            return self._store.get(task_id)
         if record.state not in {
             DiscordTaskState.RECOVERING,
             DiscordTaskState.STARTING,
@@ -163,9 +164,9 @@ class DiscordTaskActions:
             return self._store.get(duplicate)
         if record.failure is None:
             raise DiscordTaskActionUnavailable("This task has no safe retry.")
+        self._runtime.ensure_open()
         if record.failure.retry_mode is DiscordTaskRetryMode.RETRY_DELIVERY:
-            result = await self._retry_delivery(record, interaction_id)
-            return result
+            return await self._retry_delivery(record, interaction_id)
         self._queries.validate_session_retry(record)
         await self._queries.require_idle_saved_session(record)
         record = self._queries.status(task_id, access)
@@ -174,6 +175,7 @@ class DiscordTaskActions:
         if duplicate is not None:
             return self._store.get(duplicate)
         self._queries.validate_session_retry(record)
+        self._runtime.ensure_open()
         try:
             recovering = persist_update(
                 self._store,
@@ -188,15 +190,7 @@ class DiscordTaskActions:
             ) from error
         self._interactions.remember(interaction_id, task_id)
         self._runtime.spawn_agent(
-            task_id,
-            AgentRunSpec(
-                prompt=GENERIC_RESUME_PROMPT,
-                source_message_id=None,
-                attachments=StagedDiscordAttachments(paths=(), directory=None),
-                origin_context=None,
-                recovering=True,
-                require_existing_session=True,
-            ),
+            task_id, AgentRunSpec.for_recovery(GENERIC_RESUME_PROMPT)
         )
         await self._runtime.render(recovering)
         return recovering
@@ -223,6 +217,7 @@ class DiscordTaskActions:
             if duplicate is not None:
                 return self._store.get(duplicate)
             self._queries.validate_continuation(parent, request)
+            self._runtime.ensure_open()
             child = new_record(
                 request,
                 self._task_id_factory(),

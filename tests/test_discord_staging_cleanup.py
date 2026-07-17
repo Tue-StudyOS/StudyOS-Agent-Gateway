@@ -3,11 +3,6 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from discord_task_input_fakes import (
-    FakeAttachment,
-    FakeAttachmentDownloader,
-    FakeMessage,
-)
 
 from study_discord_agent import discord_staging_files
 from study_discord_agent.agent_errors import AgentWorkspaceOrAttachmentError
@@ -15,6 +10,11 @@ from study_discord_agent.discord_staging_files import StagingCleanupRegistry
 from study_discord_agent.discord_task_inputs import (
     StagedDiscordAttachments,
     stage_message_attachments,
+)
+from tests.discord_task_input_fakes import (
+    FakeAttachment,
+    FakeAttachmentDownloader,
+    FakeMessage,
 )
 
 
