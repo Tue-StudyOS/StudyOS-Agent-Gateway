@@ -38,6 +38,49 @@ async def test_prepare_creates_git_worktree_for_identified_repo(tmp_path: Path) 
 
 
 @pytest.mark.asyncio
+async def test_prepare_uses_explicit_repository_context_over_prompt_text(tmp_path: Path) -> None:
+    canonical_root = tmp_path / "Tue-StudyOS"
+    expected = canonical_root / "expected"
+    _create_git_repo(expected)
+    _create_git_repo(canonical_root / "conflicting")
+    manager = DiscordWorktreeManager(
+        worktree_root=str(tmp_path / "discord-worktrees"),
+        canonical_root=str(canonical_root),
+    )
+
+    workspace = await manager.prepare(
+        "work on Tue-StudyOS/conflicting",
+        123,
+        repository_full_name="Tue-StudyOS/expected",
+    )
+
+    assert workspace.repo_name == "expected"
+    assert workspace.canonical_path == expected
+    assert workspace.path == tmp_path / "discord-worktrees" / "123" / "expected"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "repository_full_name",
+    ("other-org/repository", "Tue-StudyOS/../outside", "Tue-StudyOS/"),
+)
+async def test_prepare_rejects_non_studyos_or_unsafe_repository_context(
+    tmp_path: Path,
+    repository_full_name: str,
+) -> None:
+    manager = DiscordWorktreeManager(worktree_root=str(tmp_path / "discord-worktrees"))
+
+    with pytest.raises(ValueError, match="repository context"):
+        await manager.prepare(
+            "work on Tue-StudyOS/example",
+            123,
+            repository_full_name=repository_full_name,
+        )
+
+    assert not (tmp_path / "discord-worktrees" / "123").exists()
+
+
+@pytest.mark.asyncio
 async def test_prepare_uses_separate_thread_worktrees_for_same_repo(tmp_path: Path) -> None:
     canonical_root = tmp_path / "Tue-StudyOS"
     _create_git_repo(canonical_root / "example")

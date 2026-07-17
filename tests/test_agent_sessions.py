@@ -7,6 +7,7 @@ from typing import Any, cast
 import pytest
 
 from study_discord_agent.agent import AgentExecutionContext, AgentGateway
+from study_discord_agent.codex_app_server_runtime import SteerResult
 from study_discord_agent.codex_app_server_turn import AppServerTurnResult
 from study_discord_agent.codex_command import AgentUsage
 from study_discord_agent.usage_store import ChannelUsageStore, default_usage_store_path
@@ -21,6 +22,7 @@ class _RuntimeCall:
 class _FakePersistentRuntime:
     def __init__(self) -> None:
         self.calls: list[_RuntimeCall] = []
+        self.steers: list[tuple[int, str]] = []
 
     async def run(
         self,
@@ -38,6 +40,17 @@ class _FakePersistentRuntime:
             thread_id="thread-1",
             usage=AgentUsage(input_tokens=2, output_tokens=1),
         )
+
+    async def steer(
+        self,
+        *,
+        channel_id: int,
+        prompt: str,
+        local_images: tuple[Path, ...] = (),
+    ) -> SteerResult:
+        del local_images
+        self.steers.append((channel_id, prompt))
+        return SteerResult.STEERED
 
 
 @pytest.mark.asyncio
@@ -93,6 +106,30 @@ async def test_webhook_channel_metadata_without_execution_remains_one_shot(
 
     assert reply.message == "done"
     assert fake_runtime.calls == []
+
+
+@pytest.mark.asyncio
+async def test_source_less_steering_reaches_persistent_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent = AgentGateway(
+        webhook_url=None,
+        command="codex exec --json -",
+        workdir=None,
+        timeout_seconds=10,
+    )
+    fake_runtime = _FakePersistentRuntime()
+    monkeypatch.setattr(agent, "_codex_runtime", cast(Any, fake_runtime))
+
+    result = await agent.steer(
+        prompt="use the updated scope",
+        user="student",
+        channel_id=123,
+        source_message_id=None,
+    )
+
+    assert result is SteerResult.STEERED
+    assert fake_runtime.steers[0][0] == 123
 
 
 @pytest.mark.asyncio

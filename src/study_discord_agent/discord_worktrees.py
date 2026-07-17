@@ -28,8 +28,18 @@ class DiscordWorktreeManager:
         self._canonical_root = Path(canonical_root)
         self._org_name = org_name
 
-    async def prepare(self, prompt: str, channel_id: int) -> DiscordWorkspace:
+    async def prepare(
+        self,
+        prompt: str,
+        channel_id: int,
+        *,
+        repository_full_name: str | None = None,
+    ) -> DiscordWorkspace:
         channel_root = self._worktree_root / str(channel_id)
+        if repository_full_name is not None:
+            repo_name = self._repository_name_from_context(repository_full_name)
+            return await self._prepare_repo_workspace(channel_root, repo_name)
+
         repo_names = extract_org_repo_names(prompt, self._org_name)
         if len(repo_names) != 1:
             if not repo_names:
@@ -39,7 +49,13 @@ class DiscordWorktreeManager:
             channel_root.mkdir(parents=True, exist_ok=True)
             return DiscordWorkspace(path=channel_root)
 
-        repo_name = repo_names[0]
+        return await self._prepare_repo_workspace(channel_root, repo_names[0])
+
+    async def _prepare_repo_workspace(
+        self,
+        channel_root: Path,
+        repo_name: str,
+    ) -> DiscordWorkspace:
         canonical_path = self._canonical_root / repo_name
         worktree_path = channel_root / repo_name
         await self._ensure_canonical_repo(repo_name, canonical_path)
@@ -49,6 +65,19 @@ class DiscordWorktreeManager:
             repo_name=repo_name,
             canonical_path=canonical_path,
         )
+
+    def _repository_name_from_context(self, repository_full_name: str) -> str:
+        owner, separator, repo_name = repository_full_name.partition("/")
+        if (
+            separator != "/"
+            or owner != self._org_name
+            or not repo_name
+            or "/" in repo_name
+            or repo_name in {".", ".."}
+            or re.fullmatch(REPO_NAME_PATTERN, repo_name) is None
+        ):
+            raise ValueError("Discord repository context is invalid")
+        return repo_name
 
     async def _single_existing_repo_worktree(
         self,

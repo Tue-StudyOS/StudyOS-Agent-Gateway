@@ -48,6 +48,7 @@ class AgentReply:
 class AgentExecutionContext:
     channel_id: int
     trigger_event_id: int
+    repository_full_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -195,6 +196,7 @@ class AgentGateway:
             args,
             prompt,
             execution.channel_id if execution else None,
+            execution.repository_full_name if execution else None,
         )
         if workspace:
             args = with_codex_cd_args(args, workspace.path)
@@ -276,6 +278,7 @@ class AgentGateway:
         args: list[str],
         prompt: str,
         channel_id: int | None,
+        repository_full_name: str | None,
     ) -> DiscordWorkspace | None:
         if (
             self._discord_worktrees is None
@@ -284,8 +287,12 @@ class AgentGateway:
         ):
             return None
         try:
-            workspace = await self._discord_worktrees.prepare(prompt, channel_id)
-        except (OSError, RuntimeError) as exc:
+            workspace = await self._discord_worktrees.prepare(
+                prompt,
+                channel_id,
+                repository_full_name=repository_full_name,
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
             raise AgentWorkspaceOrAttachmentError(
                 "Discord workspace could not be prepared",
             ) from exc

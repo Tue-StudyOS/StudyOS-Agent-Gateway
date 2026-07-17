@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from study_discord_agent.agent import AgentGateway
+from study_discord_agent.agent_errors import AgentProcessFailed
 from study_discord_agent.codex_command import (
     add_codex_image_args,
     build_codex_resume_args,
@@ -43,6 +44,20 @@ async def test_agent_command_extracts_final_json_message() -> None:
     reply = await agent.ask("hello course", user="student", channel_id=123)
 
     assert reply.message == "final answer"
+
+
+@pytest.mark.asyncio
+async def test_agent_command_exit_is_mapped_to_typed_failure() -> None:
+    command = f"{sys.executable} -c \"import sys; sys.stderr.write('private detail'); sys.exit(3)\""
+    agent = AgentGateway(
+        webhook_url=None,
+        command=command,
+        workdir=None,
+        timeout_seconds=10,
+    )
+
+    with pytest.raises(AgentProcessFailed, match="usable reply"):
+        await agent.ask("hello course", user="student", channel_id=123)
 
 
 def test_extract_agent_result_reads_session_id() -> None:

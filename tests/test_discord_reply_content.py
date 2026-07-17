@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from study_discord_agent.agent_errors import AgentWorkspaceOrAttachmentError
 from study_discord_agent.discord_reply_content import prepare_discord_reply
 
 
@@ -52,3 +53,14 @@ def test_reply_attachment_uses_task_delivery_key(tmp_path: Path) -> None:
 
     assert prepared.generated_file is not None
     assert prepared.generated_file.name == f"reply-{delivery_key}.md"
+
+
+@pytest.mark.parametrize("delivery_key", ("../outside", "task/other", "task\\other"))
+def test_reply_attachment_rejects_path_traversal_delivery_keys(
+    tmp_path: Path,
+    delivery_key: str,
+) -> None:
+    with pytest.raises(AgentWorkspaceOrAttachmentError, match="delivery key is invalid"):
+        prepare_discord_reply("detail " * 200, (), tmp_path, delivery_key)
+
+    assert not (tmp_path / "outside.md").exists()

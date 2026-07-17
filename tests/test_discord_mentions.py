@@ -6,7 +6,7 @@ import discord
 import pytest
 from pydantic import SecretStr
 
-from study_discord_agent.agent import AgentGateway, AgentReply, ProgressSink
+from study_discord_agent.agent import AgentExecutionContext, AgentGateway, AgentReply, ProgressSink
 from study_discord_agent.agent_progress import AgentProgress
 from study_discord_agent.codex_app_server_runtime import AgentTurnInterrupted, SteerResult
 from study_discord_agent.config import Settings
@@ -153,6 +153,19 @@ async def test_initial_status_is_deleted_after_final_reply() -> None:
     assert "Working" in _rendered(message.sent[0].view)
     assert message.sent[0].deleted
     assert message.sent[1].content == "done"
+
+
+@pytest.mark.asyncio
+async def test_mention_starts_persistent_execution_with_message_trigger() -> None:
+    agent = FakeAgent()
+    coordinator = _coordinator(agent)
+    message = FakeMessage(9001, channel_id=123)
+
+    await coordinator.dispatch(cast(Any, message), "hello", _origin())
+    await _wait_until(lambda: len(message.sent) == 2)
+
+    execution = cast(AgentExecutionContext, agent.calls[0]["execution"])
+    assert execution == AgentExecutionContext(channel_id=123, trigger_event_id=9001)
 
 
 @pytest.mark.asyncio

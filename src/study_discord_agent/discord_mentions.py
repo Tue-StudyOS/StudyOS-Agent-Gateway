@@ -7,7 +7,7 @@ from pathlib import Path
 
 import discord
 
-from study_discord_agent.agent import AgentGateway, AgentReply
+from study_discord_agent.agent import AgentExecutionContext, AgentGateway, AgentReply
 from study_discord_agent.codex_app_server_runtime import AgentTurnInterrupted, SteerResult
 from study_discord_agent.config import Settings
 from study_discord_agent.discord_files import (
@@ -200,6 +200,10 @@ class DiscordMentionCoordinator:
                 attachment_paths=attachments,
                 origin_context=origin_context,
                 on_progress=progress.update,
+                execution=AgentExecutionContext(
+                    channel_id=message.channel.id,
+                    trigger_event_id=message.id,
+                ),
             )
             await _deliver_reply(message, reply, self._settings)
             await _delete_progress(progress)
