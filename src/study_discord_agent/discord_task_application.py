@@ -25,6 +25,9 @@ from study_discord_agent.discord_task_component_controller import (
 )
 from study_discord_agent.discord_task_components import DiscordTaskActionItem
 from study_discord_agent.discord_task_controller import DiscordTaskController
+from study_discord_agent.discord_task_execution import (
+    DiscordTaskExecutionContextResolver,
+)
 from study_discord_agent.discord_task_messenger import DiscordTaskCardMessenger
 from study_discord_agent.discord_task_model import DiscordTaskRecord
 from study_discord_agent.discord_task_service import DiscordTaskService
@@ -36,6 +39,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 WaitUntilReady = Callable[[], Awaitable[None]]
+AfterReconcile = Callable[[], Awaitable[None]]
 
 
 class _OwnerControlResolver:
@@ -85,13 +89,17 @@ class DiscordTaskApplication:
         client.tree.add_command(self.message_context_menu)
         self._registered = True
 
-    def start_reconciliation(self, wait_until_ready: WaitUntilReady) -> None:
+    def start_reconciliation(
+        self,
+        wait_until_ready: WaitUntilReady,
+        after_reconcile: AfterReconcile | None = None,
+    ) -> None:
         if self._closed:
             raise RuntimeError("Discord task application is closed")
         if self._reconciliation_task is not None:
             return
         self._reconciliation_task = asyncio.create_task(
-            self._reconcile_after_ready(wait_until_ready),
+            self._reconcile_after_ready(wait_until_ready, after_reconcile),
             name="discord-task-reconciliation",
         )
 
@@ -110,10 +118,13 @@ class DiscordTaskApplication:
     async def _reconcile_after_ready(
         self,
         wait_until_ready: WaitUntilReady,
+        after_reconcile: AfterReconcile | None,
     ) -> None:
         try:
             await wait_until_ready()
             await self.service.reconcile_startup()
+            if after_reconcile is not None:
+                await after_reconcile()
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -124,6 +135,7 @@ def create_discord_task_application(
     client: StudyBot,
     settings: Settings,
     agent: AgentGateway,
+    execution_context_resolver: DiscordTaskExecutionContextResolver | None = None,
 ) -> DiscordTaskApplication:
     allowed_roots = tuple(
         Path(root).expanduser() for root in settings.discord_artifact_allowed_root_list
@@ -147,6 +159,7 @@ def create_discord_task_application(
         delivery_cache=delivery_cache,
         allowed_artifact_roots=allowed_roots,
         max_artifact_bytes=settings.discord_artifact_max_bytes,
+        execution_context_resolver=execution_context_resolver,
     )
     control_resolver.bind(service)
     command_controller = DiscordTaskController(

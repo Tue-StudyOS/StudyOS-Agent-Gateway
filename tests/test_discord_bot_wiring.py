@@ -1,6 +1,5 @@
 import asyncio
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any, cast
 
 import discord
@@ -13,6 +12,8 @@ import study_discord_agent.discord_bot as discord_bot_module
 from study_discord_agent.config import Settings
 from study_discord_agent.discord_bot import StudyBot
 from study_discord_agent.discord_task_components import DiscordTaskActionItem
+from study_discord_agent.github_mirror_components import GitHubMirrorActionItem
+from study_discord_agent.github_mirror_store import GitHubMirrorStore
 
 
 def _settings(tmp_path: Path, *, guild_id: int | None = None) -> Settings:
@@ -30,7 +31,7 @@ def _bot(tmp_path: Path, *, guild_id: int | None = None) -> StudyBot:
         _settings(tmp_path, guild_id=guild_id),
         cast(Any, object()),
         asyncio.Queue(),
-        cast(Any, SimpleNamespace(pending_publication_ids=lambda: ())),
+        GitHubMirrorStore(tmp_path / "github-mirrors.json"),
     )
 
 
@@ -95,7 +96,9 @@ async def test_commands_dynamic_item_and_sync_scope_are_registered(
     )
     assert sync_calls == [guild]
     assert DiscordTaskActionItem in dynamic_items
+    assert GitHubMirrorActionItem in dynamic_items
     assert bot.discord_task_component_controller is bot.discord_tasks.component_controller
+    assert bot.github_mirror_controller is not None
     assert reconciled == 1
 
     await bot.discord_tasks.close()
@@ -106,6 +109,8 @@ class FakeTaskApplication:
         self.events = events
         self.error = error
         self.mentions = object()
+        self.store = cast(Any, object())
+        self.service = cast(Any, object())
 
     def register(self, client: object) -> None:
         del client

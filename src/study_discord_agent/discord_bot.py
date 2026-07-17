@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from pathlib import Path
 
 import discord
 from discord.ext import commands
@@ -16,8 +17,11 @@ from study_discord_agent.discord_task_application import (
 from study_discord_agent.discord_task_component_controller import (
     DiscordTaskInteractionController,
 )
+from study_discord_agent.github_mirror_components import GitHubMirrorActionItem
+from study_discord_agent.github_mirror_controller import GitHubMirrorController
 from study_discord_agent.github_mirror_publisher import GitHubMirrorPublisher
 from study_discord_agent.github_mirror_store import GitHubMirrorStore
+from study_discord_agent.github_task_execution import GitHubTaskExecutionResolver
 
 logger = logging.getLogger(__name__)
 PUBLICATION_RECONCILE_INTERVAL_SECONDS = 60
@@ -40,13 +44,23 @@ class StudyBot(commands.Bot):
         self.agent = agent
         self.queue = queue
         self.mirror_store = mirror_store
+        canonical_root = Path("/workspaces/Tue-StudyOS")
         self.discord_tasks: DiscordTaskApplication = create_discord_task_application(
             self,
             settings,
             agent,
+            GitHubTaskExecutionResolver(mirror_store, canonical_root),
         )
         self.discord_tasks.register(self)
         self._mentions = self.discord_tasks.mentions
+        self.github_mirror_controller = GitHubMirrorController(
+            self,
+            mirror_store,
+            self.discord_tasks.store,
+            self.discord_tasks.service,
+            canonical_root,
+        )
+        self.add_dynamic_items(GitHubMirrorActionItem)
         self.github_mirror_publisher = GitHubMirrorPublisher(
             self,
             mirror_store,
@@ -61,7 +75,10 @@ class StudyBot(commands.Bot):
             await self.tree.sync(guild=guild)
         else:
             await self.tree.sync()
-        self.discord_tasks.start_reconciliation(self.wait_until_ready)
+        self.discord_tasks.start_reconciliation(
+            self.wait_until_ready,
+            self.github_mirror_controller.reconcile_startup,
+        )
         await self._enqueue_pending_publications()
         self.loop.create_task(self._notification_worker())
         self.loop.create_task(self._publication_reconciler())
@@ -123,6 +140,8 @@ class StudyBot(commands.Bot):
         if not prompt:
             if mentioned:
                 await message.reply("Send a question or task after mentioning me.")
+            return
+        if mentioned and await self.github_mirror_controller.start_from_message(message, prompt):
             return
         origin_context = origin_context_from_message(message)
         handled = await self._mentions.dispatch(

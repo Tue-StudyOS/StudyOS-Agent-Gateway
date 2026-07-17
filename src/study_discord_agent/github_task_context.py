@@ -3,6 +3,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from study_discord_agent.agent_errors import AgentConfigurationError
 from study_discord_agent.github_mirror_model import (
     GitHubItemKind,
     GitHubMirrorRecord,
@@ -25,22 +26,32 @@ class GitHubTaskContext:
 async def resolve_github_task_context(
     record: GitHubMirrorRecord,
     canonical_root: Path,
+    *,
+    pinned_commit_sha: str | None = None,
 ) -> GitHubTaskContext:
     owner, separator, repo_name = record.repository_full_name.partition("/")
     if separator != "/" or owner != "Tue-StudyOS" or not repo_name:
-        raise RuntimeError("Only local Tue-StudyOS repositories can run GitHub actions")
+        raise AgentConfigurationError(
+            "Only local Tue-StudyOS repositories can run GitHub actions"
+        )
     root = canonical_root.expanduser().resolve()
     repository = (root / repo_name).resolve()
     if repository.parent != root or not repository.is_dir():
-        raise RuntimeError("The mirrored repository is not available locally")
-    if record.item_kind is GitHubItemKind.PULL_REQUEST:
+        raise AgentConfigurationError("The mirrored repository is not available locally")
+    if pinned_commit_sha is not None:
+        if _SHA.fullmatch(pinned_commit_sha) is None:
+            raise AgentConfigurationError("The persisted GitHub commit is invalid")
+        requested = pinned_commit_sha
+    elif record.item_kind is GitHubItemKind.PULL_REQUEST:
         if record.head_sha is None:
-            raise RuntimeError("This pull request has no pinned head commit")
+            raise AgentConfigurationError("This pull request has no pinned head commit")
         requested = record.head_sha
     else:
         requested = "HEAD"
     commit_sha = await _resolve_commit(repository, requested)
-    if record.base_sha is not None:
+    if pinned_commit_sha is not None and commit_sha != pinned_commit_sha:
+        raise AgentConfigurationError("The persisted GitHub commit does not resolve exactly")
+    if pinned_commit_sha is None and record.base_sha is not None:
         await _resolve_commit(repository, record.base_sha)
     return GitHubTaskContext(
         mirror_id=record.mirror_id,
@@ -67,5 +78,5 @@ async def _resolve_commit(repository: Path, revision: str) -> str:
     stdout, _ = await process.communicate()
     resolved = stdout.decode().strip()
     if process.returncode != 0 or _SHA.fullmatch(resolved) is None:
-        raise RuntimeError("The pinned GitHub commit is not available locally")
+        raise AgentConfigurationError("The pinned GitHub commit is not available locally")
     return resolved

@@ -106,6 +106,9 @@ async def test_reconciliation_runs_once_after_ready_and_before_close() -> None:
         await ready.wait()
         events.append("ready")
 
+    async def after_reconcile() -> None:
+        events.append("after-reconcile")
+
     application = DiscordTaskApplication(
         store=cast(Any, object()),
         delivery_cache=cast(Any, object()),
@@ -118,8 +121,8 @@ async def test_reconciliation_runs_once_after_ready_and_before_close() -> None:
         message_context_menu=cast(Any, object()),
     )
 
-    application.start_reconciliation(wait_until_ready)
-    application.start_reconciliation(wait_until_ready)
+    application.start_reconciliation(wait_until_ready, after_reconcile)
+    application.start_reconciliation(wait_until_ready, after_reconcile)
     await asyncio.sleep(0)
     assert service.reconcile_calls == 0
 
@@ -131,4 +134,10 @@ async def test_reconciliation_runs_once_after_ready_and_before_close() -> None:
 
     assert service.reconcile_calls == 1
     assert service.close_calls == 1
-    assert events == ["waiting", "ready", "reconcile", "service-close"]
+    assert events == [
+        "waiting",
+        "ready",
+        "reconcile",
+        "after-reconcile",
+        "service-close",
+    ]
