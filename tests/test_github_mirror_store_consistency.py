@@ -1,9 +1,10 @@
 import os
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from threading import Barrier
+from threading import Barrier, Thread
 from typing import cast
 from uuid import uuid4
 
@@ -175,3 +176,96 @@ def test_handled_claim_rejects_non_boolean_before_persistence(
     assert path.read_bytes() == before
     assert b"prompt-modal-secret-value" not in before
     assert _store(path).get(record.mirror_id) == record
+
+
+@dataclass
+class _ThreadOutcome:
+    value: object | None = None
+    error: BaseException | None = None
+
+
+def _run_bounded(operation: Callable[[], object]) -> _ThreadOutcome:
+    outcome = _ThreadOutcome()
+
+    def run() -> None:
+        try:
+            outcome.value = operation()
+        except BaseException as error:
+            outcome.error = error
+
+    thread = Thread(target=run, daemon=True)
+    thread.start()
+    thread.join(timeout=1)
+    assert not thread.is_alive(), "mirror store callback reentry deadlocked"
+    return outcome
+
+
+def test_compare_and_set_callback_can_read_same_store_without_deadlock(tmp_path: Path) -> None:
+    store = _store(tmp_path / "reentrant-read.json")
+    record = store.upsert_event(_event("first"), guild_id=10, channel_id=20).record
+
+    outcome = _run_bounded(
+        lambda: store.compare_and_set(
+            record.mirror_id,
+            record.revision,
+            lambda current: replace(
+                current,
+                thread_id=store.get(current.mirror_id).channel_id,
+            ),
+        )
+    )
+
+    assert outcome.error is None
+    updated = cast(GitHubMirrorRecord, outcome.value)
+    assert updated.thread_id == record.channel_id
+    assert updated.revision == record.revision + 1
+
+
+def test_compare_and_set_callback_rejects_nested_mutation_without_overwrite(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path / "nested-mutation.json")
+    record = store.upsert_event(_event("first"), guild_id=10, channel_id=20).record
+
+    def nested_mutation(current: GitHubMirrorRecord) -> GitHubMirrorRecord:
+        store.attach_card_if_missing(current.mirror_id, 99)
+        return current
+
+    outcome = _run_bounded(
+        lambda: store.compare_and_set(
+            record.mirror_id,
+            record.revision,
+            nested_mutation,
+        )
+    )
+
+    assert isinstance(outcome.error, RuntimeError)
+    assert "callback" in str(outcome.error)
+    assert store.get(record.mirror_id) == record
+
+
+def test_compare_and_set_detects_nested_other_store_mutation_without_overwrite(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "nested-other-store.json"
+    first = _store(path)
+    record = first.upsert_event(_event("first"), guild_id=10, channel_id=20).record
+    second = _store(path)
+
+    def nested_mutation(current: GitHubMirrorRecord) -> GitHubMirrorRecord:
+        second.attach_card_if_missing(current.mirror_id, 99)
+        return replace(current, thread_id=303)
+
+    outcome = _run_bounded(
+        lambda: first.compare_and_set(
+            record.mirror_id,
+            record.revision,
+            nested_mutation,
+        )
+    )
+
+    assert isinstance(outcome.error, GitHubMirrorRevisionConflict)
+    canonical = first.get(record.mirror_id)
+    assert canonical.card_message_id == 99
+    assert canonical.thread_id is None
+    assert canonical.revision == record.revision + 1

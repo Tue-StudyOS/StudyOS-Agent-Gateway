@@ -62,6 +62,7 @@ class GitHubHandledActionClaim:
     succeeded: bool
 
     def __post_init__(self) -> None:
+        _exact_enum(self.action, GitHubMirrorAction, "action")
         _positive_integer(self.interaction_id, "interaction_id")
         _opaque_task_id(self.task_id, "task_id")
         if type(self.succeeded) is not bool:
@@ -76,6 +77,7 @@ class GitHubPendingAction:
     claimed_at: str
 
     def __post_init__(self) -> None:
+        _exact_enum(self.action, GitHubMirrorAction, "action")
         _positive_integer(self.interaction_id, "interaction_id")
         _opaque_task_id(self.task_id, "task_id")
         _timestamp(self.claimed_at, "claimed_at")
@@ -102,6 +104,8 @@ class GitHubMirrorEvent:
     item_updated_at: str
 
     def __post_init__(self) -> None:
+        _exact_enum(self.item_kind, GitHubItemKind, "item_kind")
+        _exact_enum(self.state, GitHubItemState, "state")
         if not _DELIVERY_ID.fullmatch(self.delivery_id):
             raise ValueError("delivery_id must be a bounded identifier")
         if self.action not in GITHUB_EVENT_ACTIONS.get(self.event_name, frozenset()):
@@ -151,6 +155,8 @@ class GitHubMirrorRecord:
     updated_at: str
 
     def __post_init__(self) -> None:
+        _exact_enum(self.item_kind, GitHubItemKind, "item_kind")
+        _exact_enum(self.state, GitHubItemState, "state")
         if not _OPAQUE_ID.fullmatch(self.mirror_id):
             raise ValueError("mirror_id must be opaque lowercase UUID hex")
         if type(self.revision) is not int or self.revision < 0:
@@ -237,6 +243,11 @@ def _timestamp(value: str, name: str) -> None:
 def _positive_integer(value: int, name: str) -> None:
     if type(value) is not int or value <= 0 or value > (2**64 - 1):
         raise ValueError(f"{name} must be a positive integer")
+
+
+def _exact_enum(value: object, expected: type[StrEnum], name: str) -> None:
+    if type(value) is not expected:
+        raise ValueError(f"{name} must use the declared enum type")
 
 
 def _optional_positive_integer(value: int | None, name: str) -> None:

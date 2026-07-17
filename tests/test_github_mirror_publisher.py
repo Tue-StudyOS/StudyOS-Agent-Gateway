@@ -154,7 +154,7 @@ async def test_publish_creates_one_card_then_edits_same_logical_item(tmp_path: P
     assert len(channel.sent) == 1
     assert created.card_message_id == updated.card_message_id == duplicate.card_message_id
     assert store.get(created.mirror_id).title == "Updated"
-    assert len(channel.messages[cast(int, created.card_message_id)].edits) == 2
+    assert len(channel.messages[cast(int, created.card_message_id)].edits) == 3
     send_kwargs = channel.sent[0][1]
     allowed = cast(discord.AllowedMentions, send_kwargs["allowed_mentions"])
     assert allowed.everyone is False and allowed.users is False and allowed.roles is False

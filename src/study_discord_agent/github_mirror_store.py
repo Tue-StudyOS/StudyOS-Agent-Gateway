@@ -42,6 +42,15 @@ class GitHubMirrorRevisionConflict(RuntimeError):
     pass
 
 
+class GitHubMirrorMutationReentryError(RuntimeError):
+    pass
+
+
+class _CallbackState(threading.local):
+    def __init__(self) -> None:
+        self.active = False
+
+
 @dataclass(frozen=True)
 class GitHubMirrorUpsert:
     record: GitHubMirrorRecord
@@ -54,6 +63,7 @@ class GitHubMirrorStore:
         self._clock = clock or (lambda: datetime.now(UTC))
         self._lock = threading.Lock()
         self._file_lock = PosixFileLock(path.with_name(f"{path.name}.lock"))
+        self._callback_state = _CallbackState()
         self._records: dict[str, GitHubMirrorRecord] = {}
         with self._canonical_records():
             pass
@@ -78,6 +88,7 @@ class GitHubMirrorStore:
     def upsert_event(
         self, event: GitHubMirrorEvent, *, guild_id: int, channel_id: int
     ) -> GitHubMirrorUpsert:
+        self._reject_callback_mutation()
         with self._canonical_records() as records:
             logical_key = (
                 event.repository_full_name,
@@ -117,15 +128,22 @@ class GitHubMirrorStore:
         expected_revision: int,
         update: Callable[[GitHubMirrorRecord], GitHubMirrorRecord],
     ) -> GitHubMirrorRecord:
+        self._reject_callback_mutation()
         if type(expected_revision) is not int or expected_revision < 0:
             raise ValueError("expected_revision must be a non-negative integer")
         with self._canonical_records() as records:
             current = records[mirror_id]
             if current.revision != expected_revision:
                 raise GitHubMirrorRevisionConflict(mirror_id)
+        with self._compare_callback():
+            candidate = update(current)
+        with self._canonical_records() as records:
+            current = records[mirror_id]
+            if current.revision != expected_revision:
+                raise GitHubMirrorRevisionConflict(mirror_id)
             updated = updated_record(
                 current,
-                update,
+                lambda _: candidate,
                 _timestamp(self._clock()),
             )
             updated_records = dict(records)
@@ -136,6 +154,7 @@ class GitHubMirrorStore:
     def attach_card_if_missing(
         self, mirror_id: str, message_id: int
     ) -> tuple[GitHubMirrorRecord, bool]:
+        self._reject_callback_mutation()
         if type(message_id) is not int or message_id <= 0:
             raise ValueError("message_id must be a positive integer")
         with self._canonical_records() as records:
@@ -153,6 +172,7 @@ class GitHubMirrorStore:
             return updated, True
 
     def clear_card_if_matches(self, mirror_id: str, message_id: int) -> GitHubMirrorRecord:
+        self._reject_callback_mutation()
         with self._canonical_records() as records:
             current = records[mirror_id]
             if current.card_message_id != message_id:
@@ -166,6 +186,20 @@ class GitHubMirrorStore:
             updated_records[mirror_id] = updated
             self._commit(updated_records)
             return updated
+
+    @contextmanager
+    def _compare_callback(self) -> Generator[None]:
+        self._callback_state.active = True
+        try:
+            yield
+        finally:
+            self._callback_state.active = False
+
+    def _reject_callback_mutation(self) -> None:
+        if self._callback_state.active:
+            raise GitHubMirrorMutationReentryError(
+                "mirror store mutation is not allowed from a compare-and-set callback"
+            )
 
     @contextmanager
     def _canonical_records(self) -> Generator[dict[str, GitHubMirrorRecord]]:

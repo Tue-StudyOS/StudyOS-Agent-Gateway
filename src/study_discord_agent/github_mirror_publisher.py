@@ -10,6 +10,7 @@ from study_discord_agent.github_mirror_model import GitHubMirrorEvent, GitHubMir
 from study_discord_agent.github_mirror_store import GitHubMirrorStore
 
 logger = logging.getLogger(__name__)
+_RECONCILE_ATTEMPTS = 8
 
 
 class GitHubMirrorConfigurationError(RuntimeError):
@@ -151,6 +152,7 @@ class GitHubMirrorPublisher:
         try:
             retained, attached = self._store.attach_card_if_missing(record.mirror_id, message.id)
         except TaskStoreDurabilityError:
+            await self._reconcile_card(message, record)
             raise
         except Exception:
             try:
@@ -165,6 +167,7 @@ class GitHubMirrorPublisher:
             await message.delete()
             logger.info("deleted raced GitHub mirror card mirror_id=%s", record.mirror_id)
             return retained
+        retained = await self._reconcile_card(message, record)
         logger.info("published GitHub mirror card mirror_id=%s", record.mirror_id)
         return retained
 
@@ -183,6 +186,32 @@ class GitHubMirrorPublisher:
             raise GitHubMirrorChannelAccessError(
                 "Configured Discord PR channel is inaccessible"
             ) from error
+        await self._render_card(message, record)
+        retained = await self._reconcile_card(message, record)
+        logger.info("updated GitHub mirror card mirror_id=%s", record.mirror_id)
+        return retained
+
+    async def _reconcile_card(
+        self, message: _MirrorMessage, rendered: GitHubMirrorRecord
+    ) -> GitHubMirrorRecord:
+        rendered_revision = rendered.revision
+        for _ in range(_RECONCILE_ATTEMPTS):
+            canonical = self._store.get(rendered.mirror_id)
+            if canonical.card_message_id != message.id:
+                return canonical
+            if canonical.revision != rendered_revision:
+                await self._render_card(message, canonical)
+                rendered_revision = canonical.revision
+            latest = self._store.get(rendered.mirror_id)
+            if latest.card_message_id != message.id:
+                return latest
+            if latest.revision == rendered_revision:
+                return latest
+        raise RuntimeError("GitHub mirror card did not reach a stable revision")
+
+    async def _render_card(
+        self, message: _MirrorMessage, record: GitHubMirrorRecord
+    ) -> None:
         try:
             await message.edit(
                 content=None,
@@ -195,5 +224,3 @@ class GitHubMirrorPublisher:
             raise GitHubMirrorChannelAccessError(
                 "Configured Discord PR channel is inaccessible"
             ) from error
-        logger.info("updated GitHub mirror card mirror_id=%s", record.mirror_id)
-        return self._store.get(record.mirror_id)
