@@ -16,6 +16,8 @@
 - One active task is allowed per execution channel/thread; locks cover state/store work only.
 - A Discord task configured for Codex app-server execution never falls back to one-shot execution.
 - Initial app-server incompatibility is readiness-fatal; post-start disconnects are typed recoverable failures.
+- The companion [GitHub intake plan](2026-07-17-github-discord-intake-plan.md) extends the
+  completed task model through typed intent and opaque source-reference fields.
 - Use TDD and the StudyOS commit identity; run the narrow test named in each task before committing.
 
 ---
@@ -56,7 +58,7 @@ class AgentConfigurationError(RuntimeError): ...
 class AgentWorkspaceOrAttachmentError(RuntimeError): ...
 ```
 
-- `AgentGateway.ask(..., execution: AgentExecutionContext | None = None)` uses `execution.channel_id` for app-server, worktree, session, and usage routing. `channel_id` and optional `source_message_id` remain prompt/webhook metadata only.
+- `AgentGateway.ask(..., execution: AgentExecutionContext | None = None)` uses `execution.channel_id` for app-server, worktree, session, and usage routing. `channel_id` and optional `source_message_id` remain request metadata only.
 - `AgentGateway.steer(..., source_message_id: int | None)` accepts source-less modal input.
 - `prepare_discord_reply(..., delivery_key: str)` validates the key and names generated files without requiring a message ID.
 
@@ -72,8 +74,8 @@ async def test_source_less_discord_execution_uses_app_server_and_worktree(...):
     assert fake_runtime.calls[0].channel_id == 123
     assert prepared_workspace.name == "123"
 
-async def test_webhook_channel_metadata_without_execution_remains_one_shot(...):
-    await agent.ask("review", user="github", channel_id=123)
+async def test_metadata_only_call_without_execution_remains_one_shot(...):
+    await agent.ask("summarize", user="scheduled-runtime", channel_id=123)
     assert one_shot.calls == 1
     assert fake_runtime.calls == []
 

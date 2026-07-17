@@ -17,6 +17,8 @@
 - V2 cards use `TextDisplay`/`Container` and no message content or embeds.
 - Input is limited to 10 attachments of 8,000,000 bytes each and cleaned on every terminal path.
 - Every public send/edit disables allowed mentions; all caller-specific responses are ephemeral.
+- The companion [GitHub intake plan](2026-07-17-github-discord-intake-plan.md) extends this
+  surface through the same request, service, presenter, and component boundaries.
 - Use TDD and keep modules roughly below 300 lines.
 
 ---

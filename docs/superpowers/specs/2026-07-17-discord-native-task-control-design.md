@@ -7,9 +7,10 @@
 StudyOS keeps mention-first conversation while adding a native Discord control surface
 around the same agent lifecycle. Slash/context actions improve discovery; one persistent
 Components V2 card and a bounded task registry preserve control and restart-safe status.
+The companion [GitHub-to-Discord intake design](2026-07-17-github-discord-intake-design.md) extends this foundation with passive PR/issue cards and explicit user-triggered intents.
 
-Tasks stay in the invoking channel or thread unless `/study ask` explicitly requests a
-dedicated thread. The gateway never silently changes execution mode or reruns work.
+General tasks stay in the invoking channel/thread unless `/study ask` requests a dedicated
+thread; GitHub mirror actions use the companion design's mandatory item thread. The gateway never silently changes execution mode or reruns work.
 
 ## Decision And Goals
 
@@ -28,8 +29,7 @@ prompt commands and less coupled than starting with course-specific GitHub workf
 
 ## Non-Goals
 
-- Direct commands to merge PRs, close issues, or perform other GitHub writes without a
-  separate confirmation design. Removed direct GitHub commands stay removed.
+- Webhook-driven agent/action automation or direct merge controls; the companion intake design owns passive mirroring, explicit tasks, and write boundaries; merge remains human-only.
 - A command for every possible prompt, repository autocomplete, or a project dashboard.
 - Multiple simultaneous turns in one Discord channel/thread or moving an active task.
 - DMs, user-installed app contexts, or cross-server tasks.
