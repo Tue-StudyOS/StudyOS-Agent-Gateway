@@ -210,7 +210,7 @@ class AppServerTransport:
     async def _notify_exit(self, error: BaseException) -> None:
         if not self._closing:
             await self._notifications.put(
-                AppServerNotification("app-server/exited", {"message": str(error)})
+                AppServerNotification("app-server/exited", {}, error)
             )
 
     async def _close_stdin(self, process: asyncio.subprocess.Process) -> None:

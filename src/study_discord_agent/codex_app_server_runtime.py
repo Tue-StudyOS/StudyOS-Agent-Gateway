@@ -1,24 +1,28 @@
 import asyncio
-import logging
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import cast
 
-from study_discord_agent.agent_progress import progress_from_notification
+from study_discord_agent.agent_errors import AgentTurnTimedOut
+from study_discord_agent.agent_execution_policy import AgentExecutionPolicy
 from study_discord_agent.codex_app_server import CodexAppServerClient
-from study_discord_agent.codex_app_server_events import (
-    agent_message,
-    is_not_steerable_error,
-    notification_turn_id,
-    turn_error_message,
-    usage_from_notification,
-)
+from study_discord_agent.codex_app_server_connection import ClientFactory, CodexAppServerConnection
+from study_discord_agent.codex_app_server_events import is_not_steerable_error, notification_turn_id
 from study_discord_agent.codex_app_server_protocol import (
     ApprovalPolicy,
+    AppServerClosedError,
     AppServerNotification,
+    AppServerProcessError,
+    AppServerProtocolError,
     AppServerRpcError,
     SandboxMode,
 )
+from study_discord_agent.codex_app_server_runtime_failures import (
+    disconnected,
+    is_protocol_incompatibility,
+    raise_runtime_failure,
+)
+from study_discord_agent.codex_app_server_thread_loader import load_thread
 from study_discord_agent.codex_app_server_turn import (
     ActiveTurn,
     AgentTurnInterrupted,
@@ -26,15 +30,18 @@ from study_discord_agent.codex_app_server_turn import (
     ProgressSink,
     SteerResult,
 )
+from study_discord_agent.codex_app_server_turn_updates import (
+    process_notification,
+    state_for_notification,
+)
 from study_discord_agent.session_store import ChannelSessionStore
 
-logger = logging.getLogger(__name__)
-
+__all__ = ("AgentTurnInterrupted", "CodexAppServerRuntime", "SteerResult")
 
 class CodexAppServerRuntime:
     def __init__(
         self,
-        client: CodexAppServerClient,
+        client: CodexAppServerClient | ClientFactory,
         session_store: ChannelSessionStore,
         *,
         model: str | None = None,
@@ -43,7 +50,8 @@ class CodexAppServerRuntime:
         sandbox: SandboxMode | None = None,
         turn_timeout_seconds: float = 900,
     ) -> None:
-        self._client = client
+        factory = client if callable(client) else lambda: client
+        self._connection = CodexAppServerConnection(factory, self._on_notification)
         self._session_store = session_store
         self._model = model
         self._model_provider = model_provider
@@ -51,38 +59,28 @@ class CodexAppServerRuntime:
         self._sandbox: SandboxMode | None = sandbox
         self._turn_timeout = turn_timeout_seconds
         self._active: dict[int, ActiveTurn] = {}
+        self._active_generations: dict[int, int] = {}
         self._ready: dict[int, asyncio.Event] = {}
         self._starting_threads: dict[int, str] = {}
         self._early_notifications: dict[str, list[AppServerNotification]] = {}
         self._lock = asyncio.Lock()
-        self._started = False
-        self._unsubscribe: Callable[[], None] | None = None
-
     async def start(self) -> None:
-        async with self._lock:
-            if self._started:
-                return
-            await self._client.start()
-            self._unsubscribe = self._client.subscribe(self._on_notification)
-            self._started = True
-
+        await self._start_client()
     async def close(self) -> None:
-        if self._unsubscribe:
-            self._unsubscribe()
-            self._unsubscribe = None
-        await self._client.close()
+        await self._connection.close()
         async with self._lock:
-            self._started = False
             for state in self._active.values():
                 if not state.done.done():
-                    state.done.set_exception(RuntimeError("Codex app-server stopped"))
+                    state.done.set_exception(
+                        disconnected(AppServerClosedError("Codex app-server stopped"))
+                    )
             self._active.clear()
+            self._active_generations.clear()
             for event in self._ready.values():
                 event.set()
             self._ready.clear()
             self._starting_threads.clear()
             self._early_notifications.clear()
-
     async def run(
         self,
         *,
@@ -91,18 +89,53 @@ class CodexAppServerRuntime:
         cwd: str | Path | None,
         local_images: Sequence[str | Path] = (),
         on_progress: ProgressSink | None = None,
+        require_existing_thread: bool = False,
+        execution_policy: AgentExecutionPolicy | None = None,
+        repository_full_name: str | None = None,
+        commit_sha: str | None = None,
     ) -> AppServerTurnResult:
-        await self.start()
+        client = await self._start_client()
+        generation = self._connection.generation
         ready = asyncio.Event()
         async with self._lock:
             if channel_id in self._active or channel_id in self._ready:
                 raise RuntimeError("A Codex turn is already active in this Discord channel")
             self._ready[channel_id] = ready
         try:
-            thread_id = await self._load_thread(channel_id, cwd)
+            thread_id = await load_thread(
+                client,
+                self._session_store,
+                channel_id,
+                cwd,
+                model=self._model,
+                model_provider=self._model_provider,
+                approval_policy=self._approval_policy,
+                sandbox=self._sandbox,
+                require_existing=require_existing_thread,
+                execution_policy=execution_policy,
+                repository_full_name=repository_full_name,
+                commit_sha=commit_sha,
+            )
+            await self._ensure_current_generation(generation)
             async with self._lock:
                 self._starting_threads[channel_id] = thread_id
-            turn = await self._client.start_turn(thread_id, prompt, local_images=local_images)
+            turn = await client.start_turn(
+                thread_id,
+                prompt,
+                local_images=local_images,
+                approval_policy=(
+                    execution_policy.approval_policy if execution_policy else None
+                ),
+                sandbox_policy=(
+                    execution_policy.sandbox_policy if execution_policy else None
+                ),
+                environments=() if execution_policy is not None else None,
+                cwd=cwd if execution_policy is not None else None,
+                runtime_workspace_roots=(cwd,)
+                if execution_policy is not None and cwd is not None
+                else None,
+            )
+            await self._ensure_current_generation(generation)
             loop = asyncio.get_running_loop()
             state = ActiveTurn(
                 channel_id=channel_id,
@@ -112,8 +145,13 @@ class CodexAppServerRuntime:
                 progress=on_progress,
             )
             async with self._lock:
-                self._active[channel_id] = state
-                ready.set()
+                current_generation = await self._connection.client_for(generation)
+                if current_generation is not None:
+                    self._active[channel_id] = state
+                    self._active_generations[channel_id] = generation
+                    ready.set()
+            if current_generation is None:
+                await self._ensure_current_generation(generation)
             while True:
                 async with self._lock:
                     early = self._early_notifications.pop(thread_id, [])
@@ -121,23 +159,30 @@ class CodexAppServerRuntime:
                         self._starting_threads.pop(channel_id, None)
                         break
                 for notification in early:
-                    await self._process_notification(notification)
+                    await process_notification(notification, state)
             return await asyncio.wait_for(asyncio.shield(state.done), timeout=self._turn_timeout)
         except asyncio.CancelledError:
             await self.interrupt(channel_id)
             raise
         except TimeoutError:
             await self.interrupt(channel_id)
-            raise RuntimeError("Codex app-server turn timed out") from None
+            raise AgentTurnTimedOut("Codex app-server turn timed out") from None
+        except (
+            AppServerClosedError,
+            AppServerProcessError,
+            AppServerProtocolError,
+            AppServerRpcError,
+        ) as exc:
+            await raise_runtime_failure(self._connection, generation, exc)
         finally:
             async with self._lock:
                 self._active.pop(channel_id, None)
+                self._active_generations.pop(channel_id, None)
                 thread_id = self._starting_threads.pop(channel_id, None)
                 if thread_id:
                     self._early_notifications.pop(thread_id, None)
                 if event := self._ready.pop(channel_id, None):
                     event.set()
-
     async def steer(
         self,
         *,
@@ -148,8 +193,12 @@ class CodexAppServerRuntime:
         state = await self._active_turn(channel_id)
         if state is None or state.done.done():
             return SteerResult.NO_ACTIVE_TURN
+        active_client = await self._client_for_active_turn(channel_id, state)
+        if active_client is None:
+            return SteerResult.NO_ACTIVE_TURN
+        client, generation = active_client
         try:
-            await self._client.steer_turn(
+            await client.steer_turn(
                 state.thread_id,
                 state.turn_id,
                 prompt,
@@ -158,39 +207,30 @@ class CodexAppServerRuntime:
         except AppServerRpcError as exc:
             if is_not_steerable_error(exc):
                 return SteerResult.NOT_STEERABLE
-            raise RuntimeError(f"Codex steering failed: {exc}") from exc
+            if is_protocol_incompatibility(exc):
+                await raise_runtime_failure(self._connection, generation, exc)
+            raise
+        except (AppServerClosedError, AppServerProcessError, AppServerProtocolError) as exc:
+            await raise_runtime_failure(self._connection, generation, exc)
         return SteerResult.STEERED
-
     async def interrupt(self, channel_id: int) -> bool:
         state = await self._active_turn(channel_id)
         if state is None or state.done.done():
             return False
-        await self._client.interrupt_turn(state.thread_id, state.turn_id)
+        active_client = await self._client_for_active_turn(channel_id, state)
+        if active_client is None:
+            return False
+        client, generation = active_client
+        try:
+            await client.interrupt_turn(state.thread_id, state.turn_id)
+        except (
+            AppServerClosedError,
+            AppServerProcessError,
+            AppServerProtocolError,
+            AppServerRpcError,
+        ) as exc:
+            await raise_runtime_failure(self._connection, generation, exc)
         return True
-
-    async def _load_thread(self, channel_id: int, cwd: str | Path | None) -> str:
-        existing = self._session_store.get(channel_id)
-        thread = (
-            await self._client.resume_thread(
-                existing,
-                cwd=cwd,
-                model=self._model,
-                model_provider=self._model_provider,
-                approval_policy=self._approval_policy,
-                sandbox=self._sandbox,
-            )
-            if existing
-            else await self._client.start_thread(
-                cwd=cwd,
-                model=self._model,
-                model_provider=self._model_provider,
-                approval_policy=self._approval_policy,
-                sandbox=self._sandbox,
-            )
-        )
-        self._session_store.set(channel_id, thread.thread_id)
-        return thread.thread_id
-
     async def _active_turn(self, channel_id: int) -> ActiveTurn | None:
         async with self._lock:
             state = self._active.get(channel_id)
@@ -203,42 +243,71 @@ class CodexAppServerRuntime:
             return None
         async with self._lock:
             return self._active.get(channel_id)
-
-    async def _on_notification(self, notification: AppServerNotification) -> None:
+    async def _on_notification(
+        self,
+        generation: int,
+        notification: AppServerNotification,
+    ) -> None:
         if notification.method == "app-server/exited":
-            await self._fail_active_turns(notification.params.get("message"))
+            error = notification.error or AppServerProcessError("Codex app-server exited")
+            await self._connection.invalidate(generation, error)
+            await self._fail_active_turns(error)
             return
         params = cast(dict[str, object], dict(notification.params))
         if await self._buffer_starting_notification(notification, params):
             return
-        await self._process_notification(notification)
-
-    async def _process_notification(self, notification: AppServerNotification) -> None:
-        params = cast(dict[str, object], dict(notification.params))
-        state = await self._state_for_notification(params)
+        state = await state_for_notification(self._lock, self._active, params)
         if state is None:
             return
-        if notification.method == "item/completed":
-            if message := agent_message(params):
-                phase, text = message
-                if phase == "final_answer":
-                    state.final_message = text
-                elif phase is None:
-                    state.fallback_message = text
-        elif notification.method == "thread/tokenUsage/updated":
-            state.usage = usage_from_notification(params)
-        if (progress := progress_from_notification(notification.method, params)) and state.progress:
-            await state.progress(progress)
-        if notification.method == "turn/completed":
-            self._complete_turn(state, params)
-
-    async def _fail_active_turns(self, message: object) -> None:
-        error = str(message) if isinstance(message, str) else "Codex app-server exited"
+        await process_notification(notification, state)
+    async def _fail_active_turns(self, cause: BaseException) -> None:
         async with self._lock:
             states = tuple(self._active.values())
         for state in states:
             if not state.done.done():
-                state.done.set_exception(RuntimeError(error))
+                state.done.set_exception(disconnected(cause))
+    async def has_active_turn(self, channel_id: int) -> bool:
+        async with self._lock:
+            return channel_id in self._active
+    def has_persisted_session(self, channel_id: int) -> bool:
+        return self._session_store.get(channel_id) is not None
+
+    async def _start_client(self) -> CodexAppServerClient:
+        try:
+            return await self._connection.start()
+        except (
+            AppServerClosedError,
+            AppServerProcessError,
+            AppServerProtocolError,
+            AppServerRpcError,
+        ) as exc:
+            await raise_runtime_failure(self._connection, self._connection.generation, exc)
+
+    async def _client_for_active_turn(
+        self,
+        channel_id: int,
+        state: ActiveTurn,
+    ) -> tuple[CodexAppServerClient, int] | None:
+        async with self._lock:
+            generation = self._active_generations.get(channel_id)
+        if generation is None:
+            return None
+        client = await self._connection.client_for(generation)
+        if client is None and not state.done.done():
+            state.done.set_exception(
+                disconnected(AppServerClosedError("Codex app-server disconnected"))
+            )
+        return (client, generation) if client is not None else None
+
+    async def _ensure_current_generation(self, generation: int) -> None:
+        if await self._connection.client_for(generation) is not None:
+            return
+        error = await self._connection.failure_for(generation)
+        await raise_runtime_failure(
+            self._connection,
+            generation,
+            error or AppServerClosedError("Codex app-server disconnected"),
+        )
 
     async def _buffer_starting_notification(
         self,
@@ -253,43 +322,3 @@ class CodexAppServerRuntime:
                 self._early_notifications.setdefault(thread_id, []).append(notification)
                 return True
         return False
-
-    async def _state_for_notification(
-        self,
-        params: Mapping[str, object],
-    ) -> ActiveTurn | None:
-        thread_id = params.get("threadId")
-        turn_id = notification_turn_id(params)
-        async with self._lock:
-            return next(
-                (
-                    state
-                    for state in self._active.values()
-                    if state.thread_id == thread_id and state.turn_id == turn_id
-                ),
-                None,
-            )
-
-    def _complete_turn(self, state: ActiveTurn, params: Mapping[str, object]) -> None:
-        if state.done.done():
-            return
-        turn_obj = params.get("turn")
-        turn = cast(dict[str, object], turn_obj) if isinstance(turn_obj, dict) else {}
-        status = turn.get("status")
-        if status == "interrupted":
-            state.done.set_exception(AgentTurnInterrupted("Codex turn was interrupted"))
-            return
-        if status == "failed":
-            state.done.set_exception(RuntimeError(turn_error_message(turn.get("error"))))
-            return
-        message = state.final_message or state.fallback_message
-        if not message:
-            state.done.set_exception(RuntimeError("Codex app-server produced no final response"))
-            return
-        state.done.set_result(
-            AppServerTurnResult(
-                message=message.strip(),
-                thread_id=state.thread_id,
-                usage=state.usage,
-            )
-        )

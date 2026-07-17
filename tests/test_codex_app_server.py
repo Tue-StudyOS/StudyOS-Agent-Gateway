@@ -7,6 +7,7 @@ import pytest
 from study_discord_agent.codex_app_server import CodexAppServerClient
 from study_discord_agent.codex_app_server_protocol import (
     AppServerNotification,
+    AppServerProcessError,
     AppServerProtocolError,
     AppServerRpcError,
 )
@@ -26,6 +27,11 @@ for line in sys.stdin:
     request_id = message.get("id")
     params = message.get("params", {})
     if method == "initialize":
+        if params.get("capabilities") != {"experimentalApi": True}:
+            send({"id": request_id, "error": {
+                "code": -32600, "message": "Experimental API capability required"
+            }})
+            continue
         send({"id": request_id, "result": {
             "userAgent": "codex-test/1",
             "platformFamily": "unix",
@@ -49,7 +55,10 @@ for line in sys.stdin:
     elif method in ("thread/start", "thread/resume"):
         thread_id = params.get("threadId", "thread-1")
         send({"method": "test/observed", "params": {"method": method, "params": params}})
-        send({"id": request_id, "result": {"thread": {"id": thread_id}}})
+        result = {"thread": {"id": thread_id}}
+        if params.get("permissions"):
+            result["activePermissionProfile"] = {"id": params["permissions"]}
+        send({"id": request_id, "result": result})
     elif method == "turn/start":
         send({"method": "turn/started", "params": {
             "threadId": params["threadId"],
@@ -139,6 +148,30 @@ async def test_thread_turn_lifecycle_and_notifications(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_permission_profile_wire_and_legacy_sandbox_exclusion() -> None:
+    client = CodexAppServerClient(_command())
+
+    with pytest.raises(
+        ValueError,
+        match="Permission profiles cannot be combined with the legacy sandbox",
+    ):
+        await client.start_thread(
+            permissions="github-review",
+            sandbox="read-only",
+        )
+
+    async with client:
+        thread = await client.start_thread(permissions="github-review")
+        resumed = await client.resume_thread(
+            thread.thread_id,
+            permissions="github-review",
+        )
+
+    assert thread.permission_profile == "github-review"
+    assert resumed.permission_profile == "github-review"
+
+
+@pytest.mark.asyncio
 async def test_rpc_error_preserves_code_message_and_data() -> None:
     async with CodexAppServerClient(_command()) as client:
         with pytest.raises(AppServerRpcError) as exc_info:
@@ -166,6 +199,36 @@ async def test_invalid_json_fails_initialization_and_closes_process() -> None:
         await client.start()
 
     await client.close()
+
+
+@pytest.mark.asyncio
+async def test_transport_exit_notification_preserves_process_error() -> None:
+    script = r"""
+import json
+import sys
+
+request = json.loads(sys.stdin.readline())
+print(json.dumps({"id": request["id"], "result": {
+    "userAgent": "codex-test/1", "platformFamily": "unix",
+    "platformOs": "linux", "codexHome": "/tmp/codex",
+}}), flush=True)
+sys.stdin.readline()
+"""
+    exited = asyncio.Event()
+    notifications: list[AppServerNotification] = []
+
+    async def handle(notification: AppServerNotification) -> None:
+        notifications.append(notification)
+        if notification.method == "app-server/exited":
+            exited.set()
+
+    client = CodexAppServerClient(_command(script))
+    client.subscribe(handle)
+    await client.start()
+    await asyncio.wait_for(exited.wait(), timeout=1)
+    await client.close()
+
+    assert isinstance(notifications[-1].error, AppServerProcessError)
 
 
 @pytest.mark.asyncio

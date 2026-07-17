@@ -1,12 +1,21 @@
+from __future__ import annotations
+
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+from study_discord_agent.agent_errors import AgentWorkspaceOrAttachmentError
+
+if TYPE_CHECKING:
+    from study_discord_agent.discord_delivery_resources import DiscordDeliveryLease
 
 MAX_INLINE_REPLY_CHARS = 900
 MAX_INLINE_REPLY_LINES = 12
 MAX_INLINE_SUMMARY_CHARS = 320
 MAX_DISCORD_ATTACHMENTS = 10
 MARKDOWN_HEADING_RE = re.compile(r"(?m)^#{1,6}\s+\S")
+DELIVERY_KEY_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
 
 @dataclass(frozen=True)
@@ -14,28 +23,45 @@ class PreparedDiscordReply:
     message: str
     files: tuple[Path, ...]
     generated_file: Path | None = None
+    delivery_lease: DiscordDeliveryLease | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
 
 
 def prepare_discord_reply(
     message: str,
     files: tuple[Path, ...],
     artifact_root: Path,
-    source_message_id: int,
+    delivery_key: str,
 ) -> PreparedDiscordReply:
+    _validate_delivery_key(delivery_key)
     if not _needs_attachment(message):
         return PreparedDiscordReply(message=message, files=files)
     if len(files) >= MAX_DISCORD_ATTACHMENTS:
-        raise RuntimeError("Cannot attach long Discord response because reply already has 10 files")
+        raise AgentWorkspaceOrAttachmentError("Discord reply already has the attachment limit")
 
-    output_dir = artifact_root / "discord-replies"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / f"reply-{source_message_id}.md"
-    output_path.write_text(message.rstrip() + "\n", encoding="utf-8")
+    try:
+        output_dir = artifact_root / "discord-replies"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / f"reply-{delivery_key}.md"
+        output_path.write_text(message.rstrip() + "\n", encoding="utf-8")
+    except OSError as exc:
+        raise AgentWorkspaceOrAttachmentError(
+            "Discord reply attachment could not be prepared",
+        ) from exc
     return PreparedDiscordReply(
         message=_inline_summary(message),
         files=files + (output_path,),
         generated_file=output_path,
     )
+
+
+def _validate_delivery_key(delivery_key: str) -> None:
+    if DELIVERY_KEY_RE.fullmatch(delivery_key):
+        return
+    raise AgentWorkspaceOrAttachmentError("Discord reply delivery key is invalid")
 
 
 def _needs_attachment(message: str) -> bool:

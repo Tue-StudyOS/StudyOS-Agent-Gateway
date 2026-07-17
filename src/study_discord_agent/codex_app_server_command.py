@@ -3,6 +3,18 @@ from dataclasses import dataclass
 from study_discord_agent.codex_app_server_protocol import ApprovalPolicy, SandboxMode
 from study_discord_agent.codex_command import is_codex_exec_command
 
+_DISABLED_FEATURES = (
+    "apps",
+    "browser_use",
+    "browser_use_external",
+    "browser_use_full_cdp_access",
+    "computer_use",
+    "enable_mcp_apps",
+    "in_app_browser",
+    "plugins",
+    "remote_plugin",
+)
+
 
 @dataclass(frozen=True)
 class CodexAppServerLaunch:
@@ -80,6 +92,22 @@ def parse_codex_app_server_command(args: list[str]) -> CodexAppServerLaunch:
             raise _unsupported(option)
         index += 1
 
+    command.extend(
+        (
+            "-c",
+            'web_search="disabled"',
+            "-c",
+            "mcp_servers={}",
+            "-c",
+            "apps._default.enabled=false",
+            "-c",
+            "apps._default.open_world_enabled=false",
+            "-c",
+            "apps._default.destructive_enabled=false",
+        )
+    )
+    for feature in _DISABLED_FEATURES:
+        command.extend(("--disable", feature))
     local_provider = values["local_provider"]
     if local_provider:
         if local_provider not in {"ollama", "lmstudio"}:

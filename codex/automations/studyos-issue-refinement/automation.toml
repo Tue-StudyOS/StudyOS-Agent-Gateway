@@ -8,8 +8,9 @@ Find issues that are vague, duplicated, too broad, missing acceptance criteria,
 or blocked on product/UX/API decisions. Ask concise clarifying questions and
 suggest issue consolidation when useful. Do not start implementation from this
 automation.
+Do not comment, label, assign, close, edit, or otherwise mutate GitHub.
 
-Output issue numbers and the exact refinement comment or next question that
+Output issue numbers and a draft refinement comment or next question that
 would unblock the students."""
 status = "PAUSED"
 rrule = "RRULE:FREQ=HOURLY;INTERVAL=6"

@@ -6,6 +6,12 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from study_discord_agent.agent_errors import (
+    AgentConfigurationError,
+    AgentInvalidOutput,
+    AgentWorkspaceOrAttachmentError,
+)
+from study_discord_agent.agent_execution_policy import AgentExecutionPolicy
 from study_discord_agent.agent_progress import AgentProgress
 from study_discord_agent.agent_webhook import request_agent_webhook
 from study_discord_agent.artifacts import parse_agent_reply
@@ -39,6 +45,30 @@ class AgentReply:
     files: tuple[Path, ...] = ()
 
 
+@dataclass(frozen=True)
+class AgentExecutionContext:
+    channel_id: int
+    trigger_event_id: int
+    repository_full_name: str | None = None
+    repository_commit_sha: str | None = None
+    execution_policy: AgentExecutionPolicy | None = None
+    require_existing_session: bool = False
+
+    def __post_init__(self) -> None:
+        if self.execution_policy is not None and (
+            self.repository_full_name is None or self.repository_commit_sha is None
+        ):
+            raise ValueError("Restricted execution requires repository and commit context")
+
+
+@dataclass(frozen=True)
+class AgentChannelCapabilities:
+    steering: bool
+    resumable: bool
+    persisted_session: bool
+    active_turn: bool
+
+
 class AgentGateway:
     def __init__(
         self,
@@ -66,15 +96,18 @@ class AgentGateway:
             if discord_worktree_root
             else None
         )
-        args = shlex.split(command) if command else []
-        launch = (
-            parse_codex_app_server_command(args)
-            if channel_sessions_enabled and is_codex_exec_command(args)
-            else None
-        )
+        try:
+            args = shlex.split(command) if command else []
+            launch = (
+                parse_codex_app_server_command(args)
+                if channel_sessions_enabled and is_codex_exec_command(args)
+                else None
+            )
+        except ValueError as exc:
+            raise AgentConfigurationError("Agent command configuration is invalid") from exc
         self._codex_runtime = (
             CodexAppServerRuntime(
-                CodexAppServerClient(launch.command),
+                lambda: CodexAppServerClient(launch.command),
                 self._session_store,
                 model=launch.model,
                 model_provider=launch.model_provider,
@@ -105,10 +138,22 @@ class AgentGateway:
         attachment_paths: tuple[Path, ...] = (),
         origin_context: DiscordOriginContext | None = None,
         on_progress: ProgressSink | None = None,
+        execution: AgentExecutionContext | None = None,
     ) -> AgentReply:
         started_at = time.monotonic()
         logger.info("agent request started source_user=%s channel_id=%s", user, channel_id)
-        if self._webhook_url:
+        if execution:
+            reply = await self._ask_command(
+                prompt,
+                user,
+                channel_id,
+                source_message_id,
+                attachment_paths,
+                origin_context,
+                on_progress,
+                execution,
+            )
+        elif self._webhook_url:
             message, files = await request_agent_webhook(
                 self._webhook_url,
                 prompt=prompt,
@@ -128,9 +173,10 @@ class AgentGateway:
                 attachment_paths,
                 origin_context,
                 on_progress,
+                execution,
             )
         else:
-            raise RuntimeError("Configure AGENT_WEBHOOK_URL or AGENT_COMMAND")
+            raise AgentConfigurationError("Configure an agent webhook or command")
 
         elapsed = time.monotonic() - started_at
         logger.info(
@@ -150,21 +196,24 @@ class AgentGateway:
         attachment_paths: tuple[Path, ...],
         origin_context: DiscordOriginContext | None,
         on_progress: ProgressSink | None,
+        execution: AgentExecutionContext | None,
     ) -> AgentReply:
         if not self._command:
-            raise RuntimeError("AGENT_COMMAND is not configured")
+            raise AgentConfigurationError("Agent command is not configured")
 
         args = shlex.split(self._command)
         workspace = await self._prepare_discord_workspace(
             args,
             prompt,
-            channel_id,
-            source_message_id,
+            execution.channel_id if execution else None,
+            execution.repository_full_name if execution else None,
+            execution.repository_commit_sha if execution else None,
+            execution.execution_policy if execution else None,
         )
         if workspace:
             args = with_codex_cd_args(args, workspace.path)
-            if channel_id is not None:
-                self._channel_workspaces[channel_id] = workspace.path
+            if execution:
+                self._channel_workspaces[execution.channel_id] = workspace.path
         full_prompt = build_agent_prompt(
             prompt,
             user,
@@ -176,20 +225,26 @@ class AgentGateway:
             origin_context,
         )
         image_paths = tuple(path for path in attachment_paths if is_image_path(path))
-        if self._codex_runtime and channel_id is not None and source_message_id is not None:
+        if execution:
+            if self._codex_runtime is None:
+                raise AgentConfigurationError("Persistent Discord agent runtime is not configured")
             result = await self._codex_runtime.run(
-                channel_id=channel_id,
+                channel_id=execution.channel_id,
                 prompt=full_prompt,
                 cwd=workspace.path if workspace else self._codex_cwd,
                 local_images=image_paths,
                 on_progress=on_progress,
+                require_existing_thread=execution.require_existing_session,
+                execution_policy=execution.execution_policy,
+                repository_full_name=execution.repository_full_name,
+                commit_sha=workspace.commit_sha if workspace else None,
             )
             command_result = AgentCommandResult(
                 message=result.message,
                 session_id=result.thread_id,
                 usage=result.usage,
             )
-            self._record_usage(channel_id, command_result)
+            self._record_usage(execution.channel_id, command_result)
             return self._agent_reply_from_result(command_result)
 
         run_args = add_codex_image_args(args, image_paths) if is_codex_exec_command(args) else args
@@ -199,8 +254,6 @@ class AgentGateway:
             self._workdir,
             self._timeout_seconds,
         )
-        if channel_id is not None:
-            self._record_usage(channel_id, result)
         return self._agent_reply_from_result(result)
 
     async def steer(
@@ -209,7 +262,7 @@ class AgentGateway:
         prompt: str,
         user: str,
         channel_id: int,
-        source_message_id: int,
+        source_message_id: int | None,
         attachment_paths: tuple[Path, ...] = (),
         origin_context: DiscordOriginContext | None = None,
     ) -> SteerResult:
@@ -236,21 +289,53 @@ class AgentGateway:
     async def interrupt(self, channel_id: int) -> bool:
         return await self._codex_runtime.interrupt(channel_id) if self._codex_runtime else False
 
+    async def channel_capabilities(self, channel_id: int) -> AgentChannelCapabilities:
+        if self._codex_runtime is None:
+            return AgentChannelCapabilities(False, False, False, False)
+        active_turn = await self._codex_runtime.has_active_turn(channel_id)
+        persisted_session = self._codex_runtime.has_persisted_session(channel_id)
+        return AgentChannelCapabilities(
+            steering=active_turn,
+            resumable=persisted_session and not active_turn,
+            persisted_session=persisted_session,
+            active_turn=active_turn,
+        )
+
     async def _prepare_discord_workspace(
         self,
         args: list[str],
         prompt: str,
         channel_id: int | None,
-        source_message_id: int | None,
+        repository_full_name: str | None,
+        repository_commit_sha: str | None,
+        execution_policy: AgentExecutionPolicy | None,
     ) -> DiscordWorkspace | None:
+        if execution_policy is not None and (
+            self._discord_worktrees is None
+            or channel_id is None
+            or not is_codex_exec_command(args)
+        ):
+            raise AgentWorkspaceOrAttachmentError(
+                "Restricted Discord workspace is not configured"
+            )
         if (
             self._discord_worktrees is None
             or channel_id is None
-            or source_message_id is None
             or not is_codex_exec_command(args)
         ):
             return None
-        workspace = await self._discord_worktrees.prepare(prompt, channel_id)
+        try:
+            workspace = await self._discord_worktrees.prepare(
+                prompt,
+                channel_id,
+                repository_full_name=repository_full_name,
+                repository_commit_sha=repository_commit_sha,
+                execution_policy=execution_policy,
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise AgentWorkspaceOrAttachmentError(
+                "Discord workspace could not be prepared",
+            ) from exc
         logger.info(
             "prepared Discord workspace channel_id=%s path=%s repo=%s",
             channel_id,
@@ -262,7 +347,7 @@ class AgentGateway:
     def _agent_reply_from_result(self, result: AgentCommandResult) -> AgentReply:
         parsed = parse_agent_reply(result.message)
         if not parsed.message and not parsed.files:
-            raise RuntimeError("Agent command produced an empty artifact response")
+            raise AgentInvalidOutput("Agent command produced an empty artifact response")
         return AgentReply(
             message=parsed.message,
             session_id=result.session_id,

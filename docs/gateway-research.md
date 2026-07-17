@@ -16,7 +16,9 @@ Useful patterns:
 - Interactive Discord components for approval buttons and forms.
 - A control-plane mindset: the gateway owns routing, auth, and delivery; the agent owns reasoning and code work.
 
-The immediate version of this repo keeps a simpler shape: mention-triggered Discord messages, optional GitHub webhooks, and a periodic GitHub poller. The next major step should be session routing.
+The immediate version of this repo keeps a simpler shape: mention-triggered
+Discord agent work and optional passive GitHub webhook mirrors. There is no
+autonomous GitHub poller.
 
 ## Codex Surfaces
 
@@ -24,7 +26,7 @@ Codex has several useful integration surfaces.
 
 ### `codex exec`
 
-Good default for jobs triggered by Discord, GitHub webhooks, or polling:
+Good default for jobs explicitly triggered from Discord:
 
 ```bash
 codex exec --json --dangerously-bypass-approvals-and-sandbox --cd /workspace -
@@ -73,7 +75,8 @@ Hooks receive JSON on stdin and can return JSON on stdout. For example, a `PreTo
 
 ### Codex Automations
 
-For scheduled GitHub triage, Codex automations can own the cron cadence directly. The prompt should tell Codex to use the authenticated `gh` CLI instead of requiring the Python bot to carry a GitHub token.
+For scheduled GitHub reporting, a separate Codex automation runner can own the
+cron cadence. The gateway does not start such work.
 
 Use this for detached jobs:
 
@@ -82,9 +85,11 @@ Use this for detached jobs:
 - summarize stale or blocked PRs
 - identify small implementation candidates
 - propose PR plans for bounded fixes
-- comment on PRs when there is a concrete review or status update
+- prepare a report for a human without changing GitHub
 
-The bot-side poller is still useful when the output needs to be posted to Discord, but Codex automations are a cleaner fit for repository maintenance that can run without a Discord event. For StudyOS, implementation should remain human-gated: automations can identify ready issues, but a student should explicitly ask the agent to implement before it creates a branch or PR.
+Seeded automations ship paused and should remain read/report-only if activated.
+For StudyOS, a student must explicitly ask the agent to act before it comments,
+changes metadata, creates a branch, or opens a pull request.
 
 ### App Server
 
