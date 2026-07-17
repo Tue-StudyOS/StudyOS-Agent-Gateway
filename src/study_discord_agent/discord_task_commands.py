@@ -30,22 +30,18 @@ class StudyCommandGroup(
         self._controller = controller
 
     @app_commands.command(name="ask", description="Ask StudyOS to work on a task")
-    @app_commands.describe(
-        prompt="What StudyOS should do",
-        dedicated_thread="Create an isolated public task thread",
-    )
+    @app_commands.describe(prompt="What StudyOS should do")
     async def ask(
         self,
         interaction: discord.Interaction,
         prompt: str | None = None,
-        dedicated_thread: bool = False,
     ) -> None:
         if prompt is None or not prompt.strip():
             async def submit(
                 submitted: discord.Interaction,
                 instruction: str,
             ) -> None:
-                await self._start_slash(submitted, instruction, dedicated_thread)
+                await self._start_slash(submitted, instruction)
 
             await interaction.response.send_modal(
                 DiscordTaskPromptModal(
@@ -55,7 +51,7 @@ class StudyCommandGroup(
                 )
             )
             return
-        await self._start_slash(interaction, prompt.strip(), dedicated_thread)
+        await self._start_slash(interaction, prompt.strip())
 
     @app_commands.command(name="tasks", description="List recent visible StudyOS tasks")
     @app_commands.choices(
@@ -127,19 +123,21 @@ class StudyCommandGroup(
         self,
         interaction: discord.Interaction,
         prompt: str,
-        dedicated_thread: bool,
     ) -> None:
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             record = await self._controller.start_slash(
                 interaction,
                 prompt,
-                dedicated_thread,
             )
         except Exception as error:
             await _safe_error(interaction, error, operation="start")
             return
-        await _followup(interaction, f"Started StudyOS task `{_short_id(record)}`.")
+        await _followup(
+            interaction,
+            f"Started StudyOS task `{_short_id(record)}` in "
+            f"<#{record.execution_channel_id}>.",
+        )
 
 
 def create_message_context_menu(
@@ -165,7 +163,8 @@ def create_message_context_menu(
                 return
             await _followup(
                 submitted,
-                f"Started StudyOS task `{_short_id(record)}` from that message.",
+                f"Started StudyOS task `{_short_id(record)}` from that message in "
+                f"<#{record.execution_channel_id}>.",
             )
 
         await interaction.response.send_modal(

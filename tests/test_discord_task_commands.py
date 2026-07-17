@@ -39,39 +39,27 @@ from tests.test_discord_task_service_fixtures import stored_record
 
 
 @pytest.mark.asyncio
-async def test_slash_start_uses_channel_task_path_without_source_message(
-    tmp_path: Path,
-) -> None:
-    controller, service, _ = _controller(tmp_path)
-    interaction = _Interaction(_Channel())
-
-    await controller.start_slash(cast(Any, interaction), "Inspect the repository", False)
-
-    request = service.starts[0]
-    assert request.source_kind is DiscordTaskSourceKind.SLASH
-    assert request.execution_channel_id == 10
-    assert request.source_message_id is None
-    assert request.prompt == "Inspect the repository"
-
-
-@pytest.mark.asyncio
-async def test_dedicated_thread_is_neutral_and_never_falls_back(
+async def test_substantial_slash_task_always_gets_a_neutral_thread(
     tmp_path: Path,
 ) -> None:
     controller, service, _ = _controller(tmp_path)
     channel = _Channel()
     interaction = _Interaction(channel)
 
-    await controller.start_slash(cast(Any, interaction), "private prompt text", True)
+    await controller.start_slash(cast(Any, interaction), "private prompt text")
 
+    request = service.starts[0]
     assert channel.created_names == ["studyos-task"]
     assert "private" not in channel.created_names[0]
-    assert service.starts[0].origin_channel_id == 10
-    assert service.starts[0].execution_channel_id == 44
+    assert request.source_kind is DiscordTaskSourceKind.SLASH
+    assert request.origin_channel_id == 10
+    assert request.execution_channel_id == 44
+    assert request.source_message_id is None
+    assert request.prompt == "private prompt text"
 
     unsupported = _Interaction(_Channel(supports_threads=False), interaction_id=901)
     with pytest.raises(DiscordTaskCommandError, match="text channel"):
-        await controller.start_slash(cast(Any, unsupported), "task", True)
+        await controller.start_slash(cast(Any, unsupported), "task")
     assert len(service.starts) == 1
 
 
@@ -85,16 +73,14 @@ async def test_dedicated_thread_requires_actor_and_bot_thread_permissions(
     )
 
     with pytest.raises(DiscordTaskCommandError, match="You cannot"):
-        await controller.start_slash(
-            cast(Any, _Interaction(actor_denied)), "task", True
-        )
+        await controller.start_slash(cast(Any, _Interaction(actor_denied)), "task")
 
     bot_denied = _Channel(
         bot_permissions=FakePermissions(send_messages_in_threads=False)
     )
     with pytest.raises(DiscordTaskCommandError, match="StudyOS cannot"):
         await controller.start_slash(
-            cast(Any, _Interaction(bot_denied, interaction_id=901)), "task", True
+            cast(Any, _Interaction(bot_denied, interaction_id=901)), "task"
         )
 
     assert not actor_denied.created_names
@@ -109,9 +95,7 @@ async def test_failed_task_start_removes_new_dedicated_thread(tmp_path: Path) ->
     channel = _Channel()
 
     with pytest.raises(RuntimeError, match="store unavailable"):
-        await controller.start_slash(
-            cast(Any, _Interaction(channel)), "task", True
-        )
+        await controller.start_slash(cast(Any, _Interaction(channel)), "task")
 
     assert channel.thread.deleted
 
@@ -153,6 +137,8 @@ async def test_context_action_stages_selected_message_and_uses_its_source(
     assert staged_messages == [77]
     assert request.source_kind is DiscordTaskSourceKind.CONTEXT_ACTION
     assert request.source_message_id == 77
+    assert request.origin_channel_id == 10
+    assert request.execution_channel_id == 44
     assert request.attachments is staged
 
 
@@ -179,7 +165,7 @@ async def test_missing_slash_prompt_opens_modal_before_any_defer(tmp_path: Path)
     ask = group.get_command("ask")
     assert isinstance(ask, app_commands.Command)
 
-    await ask.callback(cast(Any, group), cast(Any, interaction), None, False)
+    await ask.callback(cast(Any, group), cast(Any, interaction), None)
 
     assert interaction.response.events == ["modal"]
     assert not service.starts
@@ -199,7 +185,6 @@ async def test_slash_prompt_defers_then_starts_and_responds_ephemerally(
         cast(Any, group),
         cast(Any, interaction),
         "Run focused tests",
-        False,
     )
 
     assert interaction.response.events == ["defer"]

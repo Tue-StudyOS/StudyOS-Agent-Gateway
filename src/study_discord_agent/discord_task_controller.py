@@ -22,7 +22,6 @@ from study_discord_agent.discord_task_request import DiscordTaskRequest
 from study_discord_agent.discord_task_threads import (
     DedicatedTaskThread,
     DiscordTaskThreadError,
-    channel_context,
     create_dedicated_thread,
     delete_dedicated_thread,
     interaction_scope,
@@ -72,29 +71,15 @@ class DiscordTaskController:
         self,
         interaction: discord.Interaction,
         prompt: str,
-        dedicated_thread: bool,
     ) -> DiscordTaskRecord:
         guild_id, channel_id, owner_id = _scope(interaction)
         origin_channel_id = channel_id
-        execution_channel_id = channel_id
-        origin_context = channel_context(interaction.channel)
-        dedicated: DedicatedTaskThread | None = None
-        if dedicated_thread:
-            try:
-                dedicated = await create_dedicated_thread(interaction)
-            except DiscordTaskThreadError as error:
-                raise DiscordTaskCommandError(str(error)) from error
-            execution_channel_id = dedicated.id
-            origin_context = DiscordOriginContext(
-                channel_id=dedicated.id,
-                channel_name=dedicated.name,
-                channel_type="Thread",
-                thread_id=dedicated.id,
-                thread_name=dedicated.name,
-                parent_channel_id=origin_channel_id,
-                parent_channel_name=getattr(interaction.channel, "name", None),
-                category_id=dedicated.category_id,
-            )
+        dedicated = await _create_task_thread(interaction)
+        execution_channel_id = dedicated.id
+        origin_context = _thread_context(
+            dedicated,
+            parent_channel=interaction.channel,
+        )
         request = DiscordTaskRequest(
             source_kind=DiscordTaskSourceKind.SLASH,
             guild_id=guild_id,
@@ -111,11 +96,7 @@ class DiscordTaskController:
         try:
             return await self._service.start(request)
         except BaseException:
-            if dedicated is not None:
-                try:
-                    await delete_dedicated_thread(dedicated)
-                except DiscordTaskThreadError as cleanup_error:
-                    raise DiscordTaskCommandError(str(cleanup_error)) from cleanup_error
+            await _remove_failed_thread(dedicated)
             raise
 
     async def start_message_context(
@@ -133,18 +114,20 @@ class DiscordTaskController:
             raise DiscordTaskCommandError(
                 "The selected message is no longer available in this channel."
             )
-        staged = await self._stage_attachments(
-            message,
-            self._attachment_root,
-            trigger_event_id=interaction.id,
-        )
+        dedicated = await _create_task_thread(interaction)
+        staged: StagedDiscordAttachments | None = None
         delegated = False
         try:
+            staged = await self._stage_attachments(
+                message,
+                self._attachment_root,
+                trigger_event_id=interaction.id,
+            )
             request = DiscordTaskRequest(
                 source_kind=DiscordTaskSourceKind.CONTEXT_ACTION,
                 guild_id=guild_id,
                 origin_channel_id=channel_id,
-                execution_channel_id=channel_id,
+                execution_channel_id=dedicated.id,
                 owner_id=owner_id,
                 trigger_event_id=interaction.id,
                 source_message_id=message.id,
@@ -155,8 +138,11 @@ class DiscordTaskController:
             )
             delegated = True
             return await self._service.start(request)
+        except BaseException:
+            await _remove_failed_thread(dedicated)
+            raise
         finally:
-            if not delegated:
+            if staged is not None and not delegated:
                 staged.cleanup()
 
     async def status(
@@ -246,3 +232,36 @@ def _scope(interaction: discord.Interaction) -> tuple[int, int, int]:
 
 def _empty_attachments() -> StagedDiscordAttachments:
     return StagedDiscordAttachments(paths=(), directory=None)
+
+
+async def _create_task_thread(
+    interaction: discord.Interaction,
+) -> DedicatedTaskThread:
+    try:
+        return await create_dedicated_thread(interaction)
+    except DiscordTaskThreadError as error:
+        raise DiscordTaskCommandError(str(error)) from error
+
+
+async def _remove_failed_thread(thread: DedicatedTaskThread) -> None:
+    try:
+        await delete_dedicated_thread(thread)
+    except DiscordTaskThreadError as error:
+        raise DiscordTaskCommandError(str(error)) from error
+
+
+def _thread_context(
+    thread: DedicatedTaskThread,
+    *,
+    parent_channel: object | None,
+) -> DiscordOriginContext:
+    return DiscordOriginContext(
+        channel_id=thread.id,
+        channel_name=thread.name,
+        channel_type="Thread",
+        thread_id=thread.id,
+        thread_name=thread.name,
+        parent_channel_id=getattr(parent_channel, "id", None),
+        parent_channel_name=getattr(parent_channel, "name", None),
+        category_id=thread.category_id,
+    )
