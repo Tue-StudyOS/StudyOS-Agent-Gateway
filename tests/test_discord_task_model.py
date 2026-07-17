@@ -57,51 +57,8 @@ def _failure_for(state: DiscordTaskState) -> DiscordTaskFailure | None:
     return None
 
 
-@pytest.mark.parametrize(
-    ("from_state", "to_state"),
-    [
-        (DiscordTaskState.FAILED, DiscordTaskState.RECOVERING),
-        (DiscordTaskState.TIMED_OUT, DiscordTaskState.RECOVERING),
-        (DiscordTaskState.INTERRUPTED, DiscordTaskState.RECOVERING),
-        (DiscordTaskState.RECOVERING, DiscordTaskState.STARTING),
-        (DiscordTaskState.RECOVERING, DiscordTaskState.FAILED),
-        (DiscordTaskState.RECOVERING, DiscordTaskState.STOPPING),
-        (DiscordTaskState.STARTING, DiscordTaskState.RUNNING),
-        (DiscordTaskState.STARTING, DiscordTaskState.FAILED),
-        (DiscordTaskState.STARTING, DiscordTaskState.STOPPING),
-        (DiscordTaskState.RUNNING, DiscordTaskState.DELIVERING),
-        (DiscordTaskState.RUNNING, DiscordTaskState.FAILED),
-        (DiscordTaskState.RUNNING, DiscordTaskState.TIMED_OUT),
-        (DiscordTaskState.RUNNING, DiscordTaskState.STOPPING),
-        (DiscordTaskState.RUNNING, DiscordTaskState.INTERRUPTED),
-        (DiscordTaskState.STOPPING, DiscordTaskState.STOPPED),
-        (DiscordTaskState.STOPPING, DiscordTaskState.FAILED),
-        (DiscordTaskState.STOPPING, DiscordTaskState.INTERRUPTED),
-        (DiscordTaskState.DELIVERING, DiscordTaskState.COMPLETED),
-        (DiscordTaskState.DELIVERING, DiscordTaskState.DELIVERY_FAILED),
-        (DiscordTaskState.DELIVERY_FAILED, DiscordTaskState.DELIVERING),
-    ],
-)
-def test_transition_allows_documented_edges(
-    from_state: DiscordTaskState, to_state: DiscordTaskState
-) -> None:
-    result = transition(
-        _record(from_state),
-        to_state,
-        "2026-07-17T10:01:00+00:00",
-        failure=_failure_for(to_state),
-    )
-
-    assert result.state is to_state
-    assert result.updated_at == "2026-07-17T10:01:00+00:00"
-
-
-@pytest.mark.parametrize("from_state", list(DiscordTaskState))
-@pytest.mark.parametrize("to_state", list(DiscordTaskState))
-def test_transition_rejects_every_undocumented_edge(
-    from_state: DiscordTaskState, to_state: DiscordTaskState
-) -> None:
-    documented = {
+DOCUMENTED_EDGES = frozenset(
+    {
         (DiscordTaskState.FAILED, DiscordTaskState.RECOVERING),
         (DiscordTaskState.TIMED_OUT, DiscordTaskState.RECOVERING),
         (DiscordTaskState.INTERRUPTED, DiscordTaskState.RECOVERING),
@@ -123,16 +80,31 @@ def test_transition_rejects_every_undocumented_edge(
         (DiscordTaskState.DELIVERING, DiscordTaskState.DELIVERY_FAILED),
         (DiscordTaskState.DELIVERY_FAILED, DiscordTaskState.DELIVERING),
     }
-    if (from_state, to_state) in documented:
-        return
+)
 
-    with pytest.raises(InvalidDiscordTaskTransition):
-        transition(
-            _record(from_state),
-            to_state,
-            "2026-07-17T10:01:00+00:00",
-            failure=_failure_for(to_state),
-        )
+
+def test_transition_graph_exactly_matches_documented_edges() -> None:
+    timestamp = "2026-07-17T10:01:00+00:00"
+    for from_state in DiscordTaskState:
+        for to_state in DiscordTaskState:
+            edge = (from_state, to_state)
+            if edge in DOCUMENTED_EDGES:
+                result = transition(
+                    _record(from_state),
+                    to_state,
+                    timestamp,
+                    failure=_failure_for(to_state),
+                )
+                assert result.state is to_state, edge
+                assert result.updated_at == timestamp, edge
+                continue
+            with pytest.raises(InvalidDiscordTaskTransition):
+                transition(
+                    _record(from_state),
+                    to_state,
+                    timestamp,
+                    failure=_failure_for(to_state),
+                )
 
 
 def test_interruption_claim_preserves_the_first_cause_until_delivery() -> None:
