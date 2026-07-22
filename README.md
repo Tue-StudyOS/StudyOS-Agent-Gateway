@@ -200,7 +200,7 @@ docker compose -f docker-compose.agent.yml exec studyos-agent-gateway codex logi
 | `DISCORD_ARTIFACT_MAX_BYTES` | Maximum generated file size for Discord upload |
 | `AGENT_COMMAND` | Local agent CLI command, prompt is passed on stdin |
 | `AGENT_WORKDIR` | Working directory for the agent command |
-| `AGENT_TIMEOUT_SECONDS` | Max runtime for one agent invocation |
+| `AGENT_TIMEOUT_SECONDS` | Max runtime for one agent invocation (defaults to 30 minutes) |
 | `AGENT_CHANNEL_SESSIONS_ENABLED` | Resume one Codex session per Discord channel when `AGENT_COMMAND` is `codex exec` |
 | `AGENT_SESSION_STORE_PATH` | Optional override for the Discord channel to Codex session JSON store |
 | `AGENT_DISCORD_WORKTREE_ROOT` | Per Discord channel/thread root for parallel Codex worktrees |

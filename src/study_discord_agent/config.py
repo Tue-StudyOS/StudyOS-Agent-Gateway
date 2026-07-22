@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     agent_webhook_url: str | None = None
     agent_command: str | None = None
     agent_workdir: str | None = None
-    agent_timeout_seconds: int = 900
+    agent_timeout_seconds: int = 1800
     agent_channel_sessions_enabled: bool = True
     agent_session_store_path: str | None = None
     agent_discord_worktree_root: str | None = "/workspaces/.studyos-discord-worktrees"

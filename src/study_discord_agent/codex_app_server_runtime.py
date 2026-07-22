@@ -23,6 +23,7 @@ from study_discord_agent.codex_app_server_runtime_failures import (
     raise_runtime_failure,
 )
 from study_discord_agent.codex_app_server_thread_loader import load_thread
+from study_discord_agent.codex_app_server_timeout import wait_for_turn_shutdown
 from study_discord_agent.codex_app_server_turn import (
     ActiveTurn,
     AgentTurnInterrupted,
@@ -48,7 +49,8 @@ class CodexAppServerRuntime:
         model_provider: str | None = None,
         approval_policy: ApprovalPolicy | None = None,
         sandbox: SandboxMode | None = None,
-        turn_timeout_seconds: float = 900,
+        turn_timeout_seconds: float = 1800,
+        interrupt_grace_seconds: float = 5,
     ) -> None:
         factory = client if callable(client) else lambda: client
         self._connection = CodexAppServerConnection(factory, self._on_notification)
@@ -58,6 +60,7 @@ class CodexAppServerRuntime:
         self._approval_policy: ApprovalPolicy | None = approval_policy
         self._sandbox: SandboxMode | None = sandbox
         self._turn_timeout = turn_timeout_seconds
+        self._interrupt_grace = interrupt_grace_seconds
         self._active: dict[int, ActiveTurn] = {}
         self._active_generations: dict[int, int] = {}
         self._ready: dict[int, asyncio.Event] = {}
@@ -101,6 +104,7 @@ class CodexAppServerRuntime:
             if channel_id in self._active or channel_id in self._ready:
                 raise RuntimeError("A Codex turn is already active in this Discord channel")
             self._ready[channel_id] = ready
+        state: ActiveTurn | None = None
         try:
             thread_id = await load_thread(
                 client,
@@ -166,7 +170,11 @@ class CodexAppServerRuntime:
             raise
         except TimeoutError:
             await self.interrupt(channel_id)
-            raise AgentTurnTimedOut("Codex app-server turn timed out") from None
+            if state is not None:
+                await wait_for_turn_shutdown(state.done, self._interrupt_grace)
+            raise AgentTurnTimedOut(
+                f"Codex app-server turn timed out after {self._turn_timeout:g} seconds"
+            ) from None
         except (
             AppServerClosedError,
             AppServerProcessError,

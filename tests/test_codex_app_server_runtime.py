@@ -348,12 +348,40 @@ async def test_turn_timeout_interrupts_and_raises_typed_error(tmp_path: Path) ->
         cast(CodexAppServerClient, client),
         ChannelSessionStore(tmp_path / "sessions.json"),
         turn_timeout_seconds=0.01,
+        interrupt_grace_seconds=0,
     )
 
     with pytest.raises(AgentTurnTimedOut):
         await runtime.run(channel_id=123, prompt="first", cwd=tmp_path)
 
     assert client.interrupted_turns == [("thread-1", "turn-1")]
+
+
+@pytest.mark.asyncio
+async def test_turn_timeout_waits_for_interrupt_completion(tmp_path: Path) -> None:
+    client = FakeAppServerClient()
+    runtime = CodexAppServerRuntime(
+        cast(CodexAppServerClient, client),
+        ChannelSessionStore(tmp_path / "sessions.json"),
+        turn_timeout_seconds=0.01,
+        interrupt_grace_seconds=0.2,
+    )
+    task = asyncio.create_task(runtime.run(channel_id=123, prompt="slow", cwd=tmp_path))
+    await _wait_active(client)
+    for _ in range(100):
+        if client.interrupted_turns:
+            break
+        await asyncio.sleep(0.005)
+
+    assert client.interrupted_turns == [("thread-1", "turn-1")]
+    assert not task.done()
+    await client.emit(
+        "turn/completed",
+        {"threadId": "thread-1", "turn": {"id": "turn-1", "status": "interrupted"}},
+    )
+
+    with pytest.raises(AgentTurnTimedOut, match="0.01 seconds"):
+        await task
 
 
 @pytest.mark.asyncio
